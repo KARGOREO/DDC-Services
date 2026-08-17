@@ -66,7 +66,7 @@ export default function FileUploadDropzone({ file, setFile, accept, label, helpe
       <Typography variant="h6" sx={{ fontWeight: 600, mb: 1, textAlign: 'center' }}>
         {file ? file.name : label}
       </Typography>
-      <Typography variant="body2" color="text.secondary" textAlign="center">
+      <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center' }}>
         {file ? `ขนาด: ${(file.size / 1024).toFixed(2)} KB` : helperText}
       </Typography>
     </Box>

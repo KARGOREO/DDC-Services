@@ -3,15 +3,26 @@ const path = require('path');
 const analyzeDelayService = require('../services/analyzeDelay.service');
 const validateIdentityService = require('../services/validateIdentity.service');
 const findMissingDataService = require('../services/findMissingData.service');
+const jsonToExcelService = require('../services/jsonToExcel.service');
 
 const cleanupFiles = (files) => {
     if (!files) return;
-    Object.values(files).forEach(fileArray => {
-        fileArray.forEach(file => {
-            if (fs.existsSync(file.path)) {
-                fs.unlinkSync(file.path);
-            }
+    if (Array.isArray(files)) {
+        files.forEach(file => {
+            if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
         });
+        return;
+    }
+    Object.values(files).forEach(fileArray => {
+        if (Array.isArray(fileArray)) {
+            fileArray.forEach(file => {
+                if (fs.existsSync(file.path)) {
+                    fs.unlinkSync(file.path);
+                }
+            });
+        } else if (fileArray && fileArray.path && fs.existsSync(fileArray.path)) {
+            fs.unlinkSync(fileArray.path);
+        }
     });
 };
 
@@ -73,3 +84,55 @@ exports.findMissingHandler = async (req, res, next) => {
         next(error);
     }
 };
+
+exports.jsonToExcelHandler = async (req, res, next) => {
+    try {
+        let inputSource;
+        const flatten = req.body.flatten !== 'false' && req.body.flatten !== false;
+
+        if (req.file) {
+            inputSource = req.file.path;
+        } else if (req.body && req.body.jsonData) {
+            inputSource = req.body.jsonData;
+        } else if (req.query && req.query.useSample === 'true') {
+            const samplePath = path.join(process.cwd(), 'src', 'item-excel', 'user_bma.json');
+            if (!fs.existsSync(samplePath)) {
+                return res.status(404).json({ error: 'ไม่พบไฟล์ตัวอย่าง user_bma.json ในระบบ' });
+            }
+            inputSource = samplePath;
+        } else {
+            return res.status(400).json({ error: 'กรุณาอัปโหลดไฟล์ JSON หรือส่งข้อมูล JSON มาในคำขอ' });
+        }
+
+        const result = await jsonToExcelService.execute(inputSource, { flatten });
+        if (req.file) {
+            cleanupFiles([req.file]);
+        }
+
+        res.setHeader('Content-Disposition', `attachment; filename="${result.fileName}"`);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.download(result.outputPath, result.fileName);
+    } catch (error) {
+        if (req.file) {
+            cleanupFiles([req.file]);
+        }
+        next(error);
+    }
+};
+
+exports.convertSampleUserBmaHandler = async (req, res, next) => {
+    try {
+        const samplePath = path.join(process.cwd(), 'src', 'item-excel', 'user_bma.json');
+        if (!fs.existsSync(samplePath)) {
+            return res.status(404).json({ error: 'ไม่พบไฟล์ตัวอย่าง user_bma.json ในระบบ' });
+        }
+
+        const result = await jsonToExcelService.execute(samplePath);
+        res.setHeader('Content-Disposition', `attachment; filename="${result.fileName}"`);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.download(result.outputPath, result.fileName);
+    } catch (error) {
+        next(error);
+    }
+};
+

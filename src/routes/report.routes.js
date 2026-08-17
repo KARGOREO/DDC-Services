@@ -99,4 +99,58 @@ router.post('/validate-identity', upload.fields([{ name: 'dataFile', maxCount: 1
  */
 router.post('/find-missing', upload.fields([{ name: 'd506File', maxCount: 1 }, { name: 'e506File', maxCount: 1 }]), reportController.findMissingHandler);
 
+/**
+ * @swagger
+ * /api/report/json-to-excel:
+ *   post:
+ *     summary: แปลงไฟล์ JSON ทุกรูปแบบ (Database Export) เป็นไฟล์ Excel (.xlsx)
+ *     tags: [Reports]
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               jsonFile:
+ *                 type: string
+ *                 format: binary
+ *                 description: ไฟล์ JSON ที่ต้องการแปลงเป็น Excel
+ *               flatten:
+ *                 type: boolean
+ *                 description: ต้องการแยกฟิลด์ nested object ย่อยเป็นคอลัมน์หรือไม่ (default true)
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               jsonData:
+ *                 type: object
+ *                 description: ข้อมูล JSON ที่ต้องการแปลง
+ *               flatten:
+ *                 type: boolean
+ *                 description: แตกโครงสร้าง nested หรือไม่
+ *     responses:
+ *       200:
+ *         description: สำเร็จ ส่งคืนไฟล์ Excel (.xlsx)
+ *         content:
+ *           application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+ *             schema:
+ *               type: string
+ *               format: binary
+ */
+router.post('/json-to-excel', upload.single('jsonFile'), reportController.jsonToExcelHandler);
+
+/**
+ * @swagger
+ * /api/report/json-to-excel/sample-bma:
+ *   get:
+ *     summary: แปลงไฟล์ตัวอย่าง user_bma.json ในระบบเป็นไฟล์ Excel ทันที
+ *     tags: [Reports]
+ *     responses:
+ *       200:
+ *         description: สำเร็จ ส่งคืนไฟล์ Excel ของ user_bma
+ */
+router.get('/json-to-excel/sample-bma', reportController.convertSampleUserBmaHandler);
+
 module.exports = router;
+

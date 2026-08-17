@@ -49,6 +49,14 @@ export default function Dashboard() {
       icon: ModernIcons[3]
     },
     {
+      title: 'แปลง JSON เป็น Excel',
+      description: 'แปลงไฟล์ JSON ทุกรูปแบบ (Database Export / user_bma.json) เป็นไฟล์ Excel (.xlsx) อัตโนมัติ',
+      route: '/json-to-excel',
+      gradient: 'linear-gradient(135deg, #0284c7 0%, #38bdf8 100%)',
+      shadow: 'rgba(2, 132, 199, 0.25)',
+      icon: <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M10 12l-2 2 2 2"></path><path d="M14 12l2 2-2 2"></path></svg>
+    },
+    {
       title: 'ประวัติไฟล์ในระบบ',
       description: 'ตรวจสอบรายชื่อไฟล์ทั้งหมดที่ถูกอัปโหลด แบ่งกลุ่มตามวันที่',
       route: '/history',

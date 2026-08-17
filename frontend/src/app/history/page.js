@@ -59,7 +59,7 @@ export default function HistoryPage() {
 
       {history.length === 0 ? (
         <Fade in={true} timeout={800}>
-          <Box textAlign="center" py={10}>
+          <Box sx={{ textAlign: 'center', py: 10 }}>
             <Typography variant="h6" color="text.secondary">ไม่มีประวัติไฟล์ในระบบ</Typography>
           </Box>
         </Fade>
