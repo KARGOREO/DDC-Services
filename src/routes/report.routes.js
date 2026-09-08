@@ -152,5 +152,18 @@ router.post('/json-to-excel', upload.single('jsonFile'), reportController.jsonTo
  */
 router.get('/json-to-excel/sample-bma', reportController.convertSampleUserBmaHandler);
 
+/**
+ * @swagger
+ * /api/report/json-to-excel/sample-gov-test:
+ *   get:
+ *     summary: แปลงไฟล์ตัวอย่าง test.json เป็นรายงาน Excel รูปแบบราชการ (DDC Error Log Report) ทันที
+ *     tags: [Reports]
+ *     responses:
+ *       200:
+ *         description: สำเร็จ ส่งคืนไฟล์ Excel รูปแบบราชการ
+ */
+router.get('/json-to-excel/sample-gov-test', reportController.convertSampleGovTestHandler);
+
 module.exports = router;
+
 

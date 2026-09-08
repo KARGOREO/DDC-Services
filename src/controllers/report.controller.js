@@ -89,6 +89,7 @@ exports.jsonToExcelHandler = async (req, res, next) => {
     try {
         let inputSource;
         const flatten = req.body.flatten !== 'false' && req.body.flatten !== false;
+        const mode = req.body.mode || req.query.mode || 'auto';
 
         if (req.file) {
             inputSource = req.file.path;
@@ -104,7 +105,8 @@ exports.jsonToExcelHandler = async (req, res, next) => {
             return res.status(400).json({ error: 'กรุณาอัปโหลดไฟล์ JSON หรือส่งข้อมูล JSON มาในคำขอ' });
         }
 
-        const result = await jsonToExcelService.execute(inputSource, { flatten });
+        const originalName = req.file ? req.file.originalname : undefined;
+        const result = await jsonToExcelService.execute(inputSource, { flatten, mode, originalName });
         if (req.file) {
             cleanupFiles([req.file]);
         }
@@ -127,7 +129,26 @@ exports.convertSampleUserBmaHandler = async (req, res, next) => {
             return res.status(404).json({ error: 'ไม่พบไฟล์ตัวอย่าง user_bma.json ในระบบ' });
         }
 
-        const result = await jsonToExcelService.execute(samplePath);
+        const result = await jsonToExcelService.execute(samplePath, { mode: 'standard' });
+        res.setHeader('Content-Disposition', `attachment; filename="${result.fileName}"`);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.download(result.outputPath, result.fileName);
+    } catch (error) {
+        next(error);
+    }
+};
+
+exports.convertSampleGovTestHandler = async (req, res, next) => {
+    try {
+        let samplePath = path.join(process.cwd(), 'src', 'item-excel', 'test.json');
+        if (!fs.existsSync(samplePath)) {
+            samplePath = 'c:/Users/008/Downloads/test.json';
+        }
+        if (!fs.existsSync(samplePath)) {
+            return res.status(404).json({ error: 'ไม่พบไฟล์ตัวอย่าง test.json ในระบบ' });
+        }
+
+        const result = await jsonToExcelService.execute(samplePath, { mode: 'gov' });
         res.setHeader('Content-Disposition', `attachment; filename="${result.fileName}"`);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.download(result.outputPath, result.fileName);

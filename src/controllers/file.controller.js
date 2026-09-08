@@ -52,3 +52,22 @@ exports.getFileHistory = (req, res, next) => {
         next(error);
     }
 };
+
+exports.downloadFile = (req, res, next) => {
+    try {
+        const { folder, name } = req.query;
+        if (!name) return res.status(400).json({ error: 'กรุณาระบุชื่อไฟล์' });
+        
+        const allowedFolders = ['item-excel', 'delete-e506-by-sql', 'uploads'];
+        const targetFolder = allowedFolders.includes(folder) ? folder : 'item-excel';
+        const filePath = path.join(process.cwd(), targetFolder, path.basename(name));
+
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ error: 'ไม่พบไฟล์ที่ต้องการดาวน์โหลด' });
+        }
+
+        res.download(filePath, name);
+    } catch (error) {
+        next(error);
+    }
+};

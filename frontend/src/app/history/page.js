@@ -1,12 +1,41 @@
 "use client";
+
 import React, { useState, useEffect } from 'react';
-import { Box, Typography, Container, Card, CardContent, Fade, useTheme, List, ListItem, ListItemIcon, ListItemText, Divider, Chip } from '@mui/material';
+import {
+  Box,
+  Typography,
+  Container,
+  Card,
+  Fade,
+  useTheme,
+  List,
+  ListItem,
+  ListItemIcon,
+  ListItemText,
+  Divider,
+  Chip,
+  Button,
+  CircularProgress
+} from '@mui/material';
 import axios from 'axios';
 import Swal from 'sweetalert2';
+import Link from 'next/link';
+
+// Exclusively use Material UI icons
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import ManageHistoryIcon from '@mui/icons-material/ManageHistory';
+import TableChartIcon from '@mui/icons-material/TableChart';
+import CodeIcon from '@mui/icons-material/Code';
+import DescriptionIcon from '@mui/icons-material/Description';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
+import FolderZipIcon from '@mui/icons-material/FolderZip';
 
 export default function HistoryPage() {
   const [history, setHistory] = useState([]);
+  const [loading, setLoading] = useState(true);
   const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
 
   useEffect(() => {
     fetchHistory();
@@ -14,99 +43,175 @@ export default function HistoryPage() {
 
   const fetchHistory = async () => {
     try {
+      setLoading(true);
       const res = await axios.get('http://localhost:3000/api/files/history');
       if (res.data.success) {
         setHistory(res.data.history);
       }
     } catch (error) {
       Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถดึงข้อมูลประวัติไฟล์ได้', 'error');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const getIcon = (type) => {
+  const getFileIcon = (type) => {
     if (type === 'excel') {
-      return (
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-          <polyline points="14 2 14 8 20 8"></polyline>
-          <line x1="8" y1="13" x2="16" y2="13"></line>
-          <line x1="8" y1="17" x2="16" y2="17"></line>
-          <polyline points="10 9 9 9 8 9"></polyline>
-        </svg>
-      );
+      return <TableChartIcon sx={{ color: isDark ? '#34d399' : '#059669', fontSize: 24 }} />;
     }
-    return (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-        <polyline points="14 2 14 8 20 8"></polyline>
-        <path d="M9 15l2 2 4-4"></path>
-      </svg>
-    );
+    if (type === 'sql') {
+      return <CodeIcon sx={{ color: isDark ? '#fb7185' : '#e11d48', fontSize: 24 }} />;
+    }
+    return <DescriptionIcon sx={{ color: isDark ? '#818cf8' : '#4f46e5', fontSize: 24 }} />;
   };
 
   return (
-    <Container maxWidth="md" sx={{ mt: { xs: 4, md: 8 }, pb: 8 }}>
+    <Container maxWidth="md" sx={{ py: { xs: 4, md: 7 }, pb: 10 }}>
+      {/* Back button */}
+      <Box sx={{ mb: 3 }}>
+        <Button
+          component={Link}
+          href="/"
+          startIcon={<ArrowBackIcon />}
+          sx={{
+            color: 'text.secondary',
+            borderRadius: 2,
+            '&:hover': { color: 'primary.main', bgcolor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }
+          }}
+        >
+          กลับหน้าหลัก
+        </Button>
+      </Box>
+
       <Fade in={true} timeout={500}>
         <Box sx={{ mb: 4, textAlign: 'center' }}>
-          <Typography variant="h3" sx={{ fontWeight: 800, mb: 2, background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            ประวัติการนำเข้าไฟล์
+          <Box sx={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 64,
+            height: 64,
+            borderRadius: 3,
+            background: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
+            color: 'white',
+            mb: 2,
+            boxShadow: '0 8px 24px -4px rgba(139, 92, 246, 0.4)'
+          }}>
+            <ManageHistoryIcon sx={{ fontSize: 34 }} />
+          </Box>
+          <Typography variant="h3" sx={{ 
+            fontWeight: 800, 
+            mb: 1.5, 
+            fontSize: { xs: '1.8rem', md: '2.5rem' },
+            background: 'linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%)', 
+            WebkitBackgroundClip: 'text', 
+            WebkitTextFillColor: 'transparent' 
+          }}>
+            ประวัติการนำเข้าและประมวลผลไฟล์
           </Typography>
-          <Typography variant="h6" color="text.secondary">
-            ดูไฟล์ที่ถูกอัปโหลดและสร้างขึ้นในระบบ แบ่งตามวันที่
+          <Typography variant="body1" color="text.secondary" sx={{ maxWidth: '600px', mx: 'auto' }}>
+            รายการไฟล์ที่ถูกอัปโหลดและสร้างขึ้นในระบบ แบ่งกลุ่มตามวันที่บันทึก
           </Typography>
         </Box>
       </Fade>
 
-      {history.length === 0 ? (
+      {loading ? (
+        <Box sx={{ textAlign: 'center', py: 8 }}>
+          <CircularProgress color="primary" />
+        </Box>
+      ) : history.length === 0 ? (
         <Fade in={true} timeout={800}>
-          <Box sx={{ textAlign: 'center', py: 10 }}>
-            <Typography variant="h6" color="text.secondary">ไม่มีประวัติไฟล์ในระบบ</Typography>
+          <Box sx={{ 
+            textAlign: 'center', 
+            py: 8, 
+            bgcolor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
+            borderRadius: 4,
+            border: `1px dashed ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`
+          }}>
+            <FolderZipIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 1, opacity: 0.5 }} />
+            <Typography variant="h6" color="text.secondary">ยังไม่มีประวัติไฟล์ในระบบ</Typography>
           </Box>
         </Fade>
       ) : (
         history.map((group, index) => (
-          <Fade in={true} timeout={600 + (index * 200)} key={group.date}>
+          <Fade in={true} timeout={600 + (index * 150)} key={group.date}>
             <Box sx={{ mb: 4 }}>
-              <Typography variant="h5" sx={{ fontWeight: 700, mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Chip label={group.date} color="primary" sx={{ fontWeight: 600, fontSize: '1rem', py: 2, borderRadius: 2 }} />
-                <Typography variant="body1" color="text.secondary">
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
+                <Chip 
+                  icon={<CalendarTodayIcon sx={{ fontSize: 16 }} />}
+                  label={group.date} 
+                  color="primary" 
+                  sx={{ fontWeight: 700, fontSize: '0.9rem', py: 2, borderRadius: 2 }} 
+                />
+                <Typography variant="body2" color="text.secondary">
                   ({group.files.length} ไฟล์)
                 </Typography>
-              </Typography>
+              </Box>
               
-              <Card elevation={0} sx={{ border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`, borderRadius: 3, overflow: 'hidden' }}>
+              <Card elevation={0} sx={{ borderRadius: 3, overflow: 'hidden' }}>
                 <List sx={{ p: 0 }}>
                   {group.files.map((file, i) => (
                     <React.Fragment key={i}>
-                      <ListItem sx={{ py: 2, px: 3, transition: 'all 0.2s', '&:hover': { bgcolor: theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)' } }}>
+                      <ListItem sx={{ 
+                        py: 2, 
+                        px: { xs: 2, sm: 3 }, 
+                        transition: 'all 0.2s', 
+                        '&:hover': { bgcolor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' } 
+                      }}>
                         <ListItemIcon sx={{ minWidth: 48 }}>
-                          <Box sx={{ p: 1, bgcolor: file.type === 'excel' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(244, 63, 94, 0.1)', borderRadius: 2, display: 'flex' }}>
-                            {getIcon(file.type)}
+                          <Box sx={{ 
+                            p: 1.2, 
+                            bgcolor: file.type === 'excel' 
+                              ? (isDark ? 'rgba(16, 185, 129, 0.15)' : 'rgba(16, 185, 129, 0.1)') 
+                              : (isDark ? 'rgba(244, 63, 94, 0.15)' : 'rgba(244, 63, 94, 0.1)'), 
+                            borderRadius: 2, 
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}>
+                            {getFileIcon(file.type)}
                           </Box>
                         </ListItemIcon>
                         <ListItemText 
                           primary={
-                            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>{file.name}</Typography>
+                            <Typography variant="subtitle1" sx={{ fontWeight: 600, wordBreak: 'break-word' }}>
+                              {file.name}
+                            </Typography>
                           }
                           secondary={
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0.5 }}>
-                              <Typography variant="body2" color="text.secondary">
+                            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1.5, mt: 0.5 }}>
+                              <Typography variant="caption" color="text.secondary">
                                 ขนาด: {file.size}
                               </Typography>
                               <Chip 
                                 size="small" 
                                 label={file.folder} 
+                                variant="outlined"
                                 sx={{ 
-                                  height: 20, fontSize: '0.7rem', 
-                                  bgcolor: theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'
+                                  height: 20, 
+                                  fontSize: '0.7rem', 
+                                  bgcolor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' 
                                 }} 
                               />
                             </Box>
                           }
                         />
-                        <Typography variant="body2" color="text.secondary">
-                          {new Date(file.createdAt).toLocaleTimeString('th-TH')}
-                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, ml: 1 }}>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' } }}>
+                            {new Date(file.createdAt).toLocaleTimeString('th-TH')}
+                          </Typography>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            component="a"
+                            startIcon={<FileDownloadIcon />}
+                            href={`http://localhost:3000/api/files/download?folder=${file.folder}&name=${encodeURIComponent(file.name)}`}
+                            download={file.name}
+                            sx={{ borderRadius: 2, textTransform: 'none' }}
+                          >
+                            ดาวน์โหลด
+                          </Button>
+                        </Box>
                       </ListItem>
                       {i < group.files.length - 1 && <Divider />}
                     </React.Fragment>
