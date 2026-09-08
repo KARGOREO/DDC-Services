@@ -177,13 +177,21 @@ async function buildGovErrorReportWorkbook(parsedData) {
   });
 
   // Extract all unique field keys present across all error_cases
-  // Requirement: Display EVERY field in error_cases, and error_reason MUST ALWAYS be the last column!
+  // Requirement: Display EVERY field in error_cases. address_flag and address_remark must be placed right before error_reason!
   const allFieldKeysSet = new Set();
   allErrors.forEach(errObj => {
     Object.keys(errObj).forEach(k => allFieldKeysSet.add(k));
   });
 
-  const orderedFields = Array.from(allFieldKeysSet).filter(k => k !== 'error_reason');
+  const specialEndFields = ['address_flag', 'address_remark', 'error_reason'];
+  const orderedFields = Array.from(allFieldKeysSet).filter(k => !specialEndFields.includes(k));
+
+  if (allFieldKeysSet.has('address_flag')) {
+    orderedFields.push('address_flag');
+  }
+  if (allFieldKeysSet.has('address_remark')) {
+    orderedFields.push('address_remark');
+  }
   if (allFieldKeysSet.has('error_reason')) {
     orderedFields.push('error_reason'); // error_reason is always last!
   }
