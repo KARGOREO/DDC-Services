@@ -62,13 +62,22 @@ export default function JsonToExcelPage() {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const text = e.target.result;
+        let text = e.target.result;
+        if (typeof text === 'string' && text.charCodeAt(0) === 0xFEFF) {
+          text = text.slice(1);
+        }
+
         let parsed;
         try {
           parsed = JSON.parse(text);
         } catch {
-          const cleaned = text.replace(/\\'/g, "'").replace(/\\\\"/g, '\\"');
-          parsed = JSON.parse(cleaned);
+          try {
+            const cleaned = text.replace(/\\'/g, "'").replace(/\\\\"/g, '\\"');
+            parsed = JSON.parse(cleaned);
+          } catch {
+            const doubleCleaned = text.replace(/\\"/g, '"');
+            parsed = JSON.parse(doubleCleaned);
+          }
         }
 
         const items = Array.isArray(parsed) ? parsed : [parsed];
@@ -93,9 +102,13 @@ export default function JsonToExcelPage() {
               let cases = item.error_cases;
               if (typeof cases === 'string') {
                 try {
-                  cases = JSON.parse(cases.replace(/\\\\"/g, '\\"'));
+                  cases = JSON.parse(cases);
                 } catch {
-                  cases = [];
+                  try {
+                    cases = JSON.parse(cases.replace(/\\\\"/g, '\\"'));
+                  } catch {
+                    cases = [];
+                  }
                 }
               }
               if (Array.isArray(cases)) errorCasesCount += cases.length;
@@ -155,7 +168,7 @@ export default function JsonToExcelPage() {
     formData.append('mode', currentMode);
 
     try {
-      const response = await axios.post('http://localhost:3000/api/files/json-to-excel', formData, {
+      const response = await axios.post('http://localhost:3000/api/report/json-to-excel', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         responseType: 'blob'
       });
@@ -184,15 +197,27 @@ export default function JsonToExcelPage() {
 
       Swal.fire({
         title: 'แปลงไฟล์สำเร็จ!',
-        html: `ระบบได้แปลงไฟล์เป็น <strong>${filename}</strong> และจัดเก็บสำเนาไว้ในโฟลเดอร์ <code>json-to-excel</code> เรียบร้อยแล้ว`,
+        html: `ระบบได้แปลงไฟล์เป็น <strong>${filename}</strong> และจัดเก็บสำเนาไว้ในโฟลเดอร์ <code>item-excel</code> เรียบร้อยแล้ว`,
         icon: 'success',
         confirmButtonColor: '#10b981'
       });
     } catch (error) {
       console.error('Error converting JSON to Excel:', error);
+      let errorMsg = 'ไม่สามารถแปลงไฟล์ JSON ได้ กรุณาตรวจสอบความถูกต้องของโครงสร้างไฟล์';
+      if (error.response && error.response.data) {
+        if (error.response.data instanceof Blob) {
+          try {
+            const text = await error.response.data.text();
+            const parsed = JSON.parse(text);
+            if (parsed.error) errorMsg = parsed.error;
+          } catch {}
+        } else if (typeof error.response.data.error === 'string') {
+          errorMsg = error.response.data.error;
+        }
+      }
       Swal.fire({
         title: 'เกิดข้อผิดพลาด',
-        text: 'ไม่สามารถแปลงไฟล์ JSON ได้ กรุณาตรวจสอบความถูกต้องของโครงสร้างไฟล์',
+        text: errorMsg,
         icon: 'error',
         confirmButtonColor: '#f43f5e'
       });
@@ -205,7 +230,7 @@ export default function JsonToExcelPage() {
   const handleConvertSampleGov = async () => {
     setLoading(true);
     try {
-      const response = await axios.get('http://localhost:3000/api/files/sample/test-json-excel?mode=gov', {
+      const response = await axios.get('http://localhost:3000/api/report/json-to-excel/sample-gov-test', {
         responseType: 'blob'
       });
 
@@ -234,7 +259,7 @@ export default function JsonToExcelPage() {
   const handleConvertSampleBma = async () => {
     setLoading(true);
     try {
-      const response = await axios.get('http://localhost:3000/api/files/sample/bma-excel', {
+      const response = await axios.get('http://localhost:3000/api/report/json-to-excel/sample-bma', {
         responseType: 'blob'
       });
 
