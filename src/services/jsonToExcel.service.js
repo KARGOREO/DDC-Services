@@ -177,15 +177,106 @@ async function buildGovErrorReportWorkbook(parsedData) {
   });
 
   // Extract all unique field keys present across all error_cases
-  // Requirement: Display EVERY field in error_cases. address_flag and address_remark must be placed right before error_reason!
+  // Requirement: Logical field ordering with 'uuid' first, grouped personal/address/clinical info, and special end fields preserved at the end.
   const allFieldKeysSet = new Set();
   allErrors.forEach(errObj => {
     Object.keys(errObj).forEach(k => allFieldKeysSet.add(k));
   });
 
-  const specialEndFields = ['address_flag', 'address_remark', 'error_reason'];
-  const orderedFields = Array.from(allFieldKeysSet).filter(k => !specialEndFields.includes(k));
+  // Predefined logical priority order for DDC error cases
+  const PREFERRED_FIELD_ORDER = [
+    // 1. Primary Identifier
+    'uuid',
+    'citizen_id',
+    'passport_id',
 
+    // 2. Personal Information
+    'titlename',
+    'firstname',
+    'lastname',
+    'gender',
+    'birthdate',
+    'age_year',
+    'age_month',
+    'age_day',
+    'nationality_code',
+    'married_status',
+    'work_code',
+    'contact_mobile',
+
+    // 3. Current Address
+    'address',
+    'moo',
+    'road',
+    'tmb_code',
+    'amp_code',
+    'chw_code',
+    'raw_address',
+
+    // 4. Epidem Address
+    'epidem_address',
+    'epidem_moo',
+    'epidem_road',
+    'epidem_tmb_code',
+    'epidem_amp_code',
+    'epidem_chw_code',
+
+    // 5. Clinical & Disease Information
+    'disease_code',
+    'icd_10',
+    'diagnosis_date',
+    'patient_sick',
+    'patient_found',
+    'patient_death',
+    'patient_type',
+    'patient_status',
+    'case_date',
+    'dds_date',
+
+    // 6. Hospital & Healthcare Facility
+    'hospital_code',
+    'cure_loc_code',
+    'report_loc_code',
+
+    // 7. Lab Results
+    'lab_method',
+    'lab_result',
+
+    // 8. Report Information
+    'report_name',
+    'report_date',
+    'report_time',
+    't_ransfer',
+
+    // 9. System / Status / Audit
+    'status',
+    'rec_status',
+    'state',
+    'remark',
+    'invalid_code',
+    'detected_at',
+    'resolved_at',
+    'update_datetime'
+  ];
+
+  const specialEndFields = ['address_flag', 'address_remark', 'error_reason'];
+  
+  // 1. Add fields according to preferred logical order if present
+  const orderedFields = [];
+  PREFERRED_FIELD_ORDER.forEach(field => {
+    if (allFieldKeysSet.has(field) && !specialEndFields.includes(field)) {
+      orderedFields.push(field);
+    }
+  });
+
+  // 2. Add any other dynamic/unknown fields from data not in preferred list
+  allFieldKeysSet.forEach(field => {
+    if (!orderedFields.includes(field) && !specialEndFields.includes(field)) {
+      orderedFields.push(field);
+    }
+  });
+
+  // 3. Preserve special end fields at the very end
   if (allFieldKeysSet.has('address_flag')) {
     orderedFields.push('address_flag');
   }
