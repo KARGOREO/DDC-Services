@@ -91,6 +91,24 @@ exports.jsonToExcelHandler = async (req, res, next) => {
         const flatten = req.body.flatten !== 'false' && req.body.flatten !== false;
         const mode = req.body.mode || req.query.mode || 'auto';
 
+        let filters = req.body.filters;
+        if (typeof filters === 'string') {
+            try {
+                filters = JSON.parse(filters);
+            } catch (e) {
+                filters = null;
+            }
+        }
+
+        let selectedColumns = req.body.selectedColumns;
+        if (typeof selectedColumns === 'string') {
+            try {
+                selectedColumns = JSON.parse(selectedColumns);
+            } catch (e) {
+                selectedColumns = selectedColumns.split(',').map(s => s.trim()).filter(Boolean);
+            }
+        }
+
         if (req.file) {
             inputSource = req.file.path;
         } else if (req.body && req.body.jsonData) {
@@ -106,7 +124,7 @@ exports.jsonToExcelHandler = async (req, res, next) => {
         }
 
         const originalName = req.file ? req.file.originalname : undefined;
-        const result = await jsonToExcelService.execute(inputSource, { flatten, mode, originalName });
+        const result = await jsonToExcelService.execute(inputSource, { flatten, mode, originalName, filters, selectedColumns });
         if (req.file) {
             cleanupFiles([req.file]);
         }

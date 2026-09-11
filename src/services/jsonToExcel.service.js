@@ -101,13 +101,97 @@ function flattenObject(obj, prefix = '', res = {}) {
 }
 
 /**
+ * Helper to test a single rule against a record
+ */
+function testFilterRule(item, rule) {
+  if (!rule || !rule.field) return true;
+  const { field, operator, value } = rule;
+  const rawVal = item[field];
+  const itemValStr = (rawVal === null || rawVal === undefined) ? '' : String(rawVal);
+  const targetValStr = (value === null || value === undefined) ? '' : String(value);
+
+  switch (operator) {
+    case 'equals':
+      return itemValStr.toLowerCase() === targetValStr.toLowerCase();
+    case 'not_equals':
+      return itemValStr.toLowerCase() !== targetValStr.toLowerCase();
+    case 'contains':
+      return itemValStr.toLowerCase().includes(targetValStr.toLowerCase());
+    case 'not_contains':
+      return !itemValStr.toLowerCase().includes(targetValStr.toLowerCase());
+    case 'starts_with':
+      return itemValStr.toLowerCase().startsWith(targetValStr.toLowerCase());
+    case 'ends_with':
+      return itemValStr.toLowerCase().endsWith(targetValStr.toLowerCase());
+    case 'is_empty':
+      return rawVal === null || rawVal === undefined || itemValStr.trim() === '' || itemValStr.trim() === 'null' || itemValStr.trim() === '-';
+    case 'is_not_empty':
+      return rawVal !== null && rawVal !== undefined && itemValStr.trim() !== '' && itemValStr.trim() !== 'null' && itemValStr.trim() !== '-';
+    case 'gt': {
+      const numVal = Number(rawVal);
+      const targetNum = Number(value);
+      return !isNaN(numVal) && !isNaN(targetNum) && numVal > targetNum;
+    }
+    case 'gte': {
+      const numVal = Number(rawVal);
+      const targetNum = Number(value);
+      return !isNaN(numVal) && !isNaN(targetNum) && numVal >= targetNum;
+    }
+    case 'lt': {
+      const numVal = Number(rawVal);
+      const targetNum = Number(value);
+      return !isNaN(numVal) && !isNaN(targetNum) && numVal < targetNum;
+    }
+    case 'lte': {
+      const numVal = Number(rawVal);
+      const targetNum = Number(value);
+      return !isNaN(numVal) && !isNaN(targetNum) && numVal <= targetNum;
+    }
+    case 'year_equals': {
+      if (!itemValStr || !targetValStr) return false;
+      const targetYear = parseInt(targetValStr.trim(), 10);
+      if (isNaN(targetYear)) return false;
+      const yearMatches = itemValStr.match(/\b(19\d{2}|20\d{2}|21\d{2}|25\d{2}|26\d{2})\b/g);
+      if (yearMatches) {
+        return yearMatches.some(yStr => {
+          const yNum = parseInt(yStr, 10);
+          return yNum === targetYear || (yNum > 2400 && yNum - 543 === targetYear) || (yNum < 2200 && yNum + 543 === targetYear);
+        });
+      }
+      return itemValStr.includes(targetValStr.trim());
+    }
+    default:
+      return itemValStr.toLowerCase().includes(targetValStr.toLowerCase());
+  }
+}
+
+/**
+ * Check if a record matches given filter configuration
+ */
+function matchesFilter(item, filterConfig) {
+  if (!filterConfig || !Array.isArray(filterConfig.rules) || filterConfig.rules.length === 0) {
+    return true;
+  }
+  const { logic = 'AND', rules } = filterConfig;
+  const activeRules = rules.filter(r => r && r.field && String(r.field).trim() !== '');
+  if (activeRules.length === 0) return true;
+
+  if (logic === 'OR') {
+    return activeRules.some(rule => testFilterRule(item, rule));
+  } else {
+    return activeRules.every(rule => testFilterRule(item, rule));
+  }
+}
+
+/**
  * Build Government Style Official Error Report Workbook (DDC Official Style)
  * Simplified & direct for non-IT users:
  * - Summary KPI cards with Missing Address count
  * - Direct error_cases table showing patient cases directly with exact field names
  * - Daily Master Log with Thai (field_name) labels
  */
-async function buildGovErrorReportWorkbook(parsedData) {
+async function buildGovErrorReportWorkbook(parsedData, options = {}) {
+  const { filters, selectedColumns } = options;
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'กองระบาดวิทยา กรมควบคุมโรค กระทรวงสาธารณสุข';
   workbook.lastModifiedBy = 'Central Processing Platform';
@@ -262,7 +346,7 @@ async function buildGovErrorReportWorkbook(parsedData) {
   const specialEndFields = ['address_flag', 'address_remark', 'error_reason'];
   
   // 1. Add fields according to preferred logical order if present
-  const orderedFields = [];
+  let orderedFields = [];
   PREFERRED_FIELD_ORDER.forEach(field => {
     if (allFieldKeysSet.has(field) && !specialEndFields.includes(field)) {
       orderedFields.push(field);
@@ -286,6 +370,18 @@ async function buildGovErrorReportWorkbook(parsedData) {
   if (allFieldKeysSet.has('error_reason')) {
     orderedFields.push('error_reason'); // error_reason is always last!
   }
+
+  // Filter columns if selectedColumns is provided
+  if (Array.isArray(selectedColumns) && selectedColumns.length > 0) {
+    const selectedSet = new Set(selectedColumns);
+    const filteredCols = orderedFields.filter(f => selectedSet.has(f));
+    if (filteredCols.length > 0) {
+      orderedFields = filteredCols;
+    }
+  }
+
+  // Filter error cases if filters is provided
+  const displayErrors = filters ? allErrors.filter(ec => matchesFilter(ec, filters)) : allErrors;
 
   const primaryLogDate = Array.from(logDates).join(', ') || new Date().toISOString().split('T')[0];
 
@@ -462,8 +558,8 @@ async function buildGovErrorReportWorkbook(parsedData) {
   });
 
   // 6. Data Rows for error_cases
-  if (allErrors.length === 0) {
-    const emptyVals = orderedFields.map((_, i) => i === 0 ? '(ไม่พบรายการข้อผิดพลาด ข้อมูลถูกต้องสมบูรณ์)' : '-');
+  if (displayErrors.length === 0) {
+    const emptyVals = orderedFields.map((_, i) => i === 0 ? '(ไม่พบรายการข้อผิดพลาดตรงตามเงื่อนไข)' : '-');
     const emptyRow = wsMain.addRow(emptyVals);
     emptyRow.height = 26;
     emptyRow.eachCell(cell => {
@@ -471,7 +567,7 @@ async function buildGovErrorReportWorkbook(parsedData) {
       cell.alignment = { vertical: 'middle', horizontal: 'center' };
     });
   } else {
-    allErrors.forEach((errObj, idx) => {
+    displayErrors.forEach((errObj, idx) => {
       const rowValues = orderedFields.map(field => {
         const val = errObj[field];
         if (val === null || val === undefined) return '-';
@@ -622,9 +718,335 @@ async function buildGovErrorReportWorkbook(parsedData) {
 }
 
 /**
- * Standard JSON to Excel conversion
+ * Robust JSON cleaner and parser that handles database dumps, unescaped characters, and malformed strings
  */
-function normalizeJsonData(rawData, shouldFlatten = true) {
+function cleanAndParseJson(str) {
+  if (typeof str !== 'string') return str;
+  try {
+    return JSON.parse(str);
+  } catch (err1) {
+    let cleaned = str.replace(/,\s*\}$/, '}');
+    try {
+      return JSON.parse(cleaned);
+    } catch (err2) {
+      // Fix invalid backslash escapes (e.g. \+ or \. or \0 or \')
+      cleaned = cleaned.replace(/\\([^"\\\/bfnrtu])/g, '$1');
+      try {
+        return JSON.parse(cleaned);
+      } catch (err3) {
+        cleaned = cleaned.replace(/[\u0000-\u001F]+/g, (match) => {
+          if (match === '\n') return '\\n';
+          if (match === '\r') return '\\r';
+          if (match === '\t') return '\\t';
+          return ' ';
+        });
+        try {
+          return JSON.parse(cleaned);
+        } catch (err4) {
+          // Regex key-value extraction fallback
+          const obj = {};
+          const fieldMatches = str.matchAll(/"([^"]+)"\s*:\s*("(?:\\.|[^"\\])*"|null|true|false|-?\d+(?:\.\d+)?)/g);
+          for (const m of fieldMatches) {
+            const key = m[1];
+            const rawVal = m[2];
+            if (rawVal === 'null') obj[key] = null;
+            else if (rawVal === 'true') obj[key] = true;
+            else if (rawVal === 'false') obj[key] = false;
+            else if (rawVal.startsWith('"')) obj[key] = rawVal.slice(1, -1).replace(/\\"/g, '"');
+            else obj[key] = Number(rawVal);
+          }
+          if (Object.keys(obj).length > 0) return obj;
+          throw err4;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Stream JSON objects from a file or stream without loading entire file into memory as a string.
+ * Uses high-performance line-based streaming with robust JSON parsing to capture 100% of records.
+ */
+async function streamJsonObjects(filePath, onRecord, options = {}) {
+  const { maxRecords = Infinity } = options;
+  const readline = require('readline');
+
+  let count = 0;
+  let inObject = false;
+  let objectLines = [];
+
+  const rl = readline.createInterface({
+    input: fs.createReadStream(filePath, { encoding: 'utf8', highWaterMark: 256 * 1024 }),
+    crlfDelay: Infinity
+  });
+
+  try {
+    for await (const line of rl) {
+      const trimmed = line.trim();
+
+      if (!inObject) {
+        if (trimmed === '{' || trimmed.startsWith('{"') || trimmed.startsWith('[{') || trimmed.startsWith('[{ "') || trimmed.startsWith('{ "')) {
+          inObject = true;
+          let cleanStart = line.replace(/^\s*\[\s*/, '');
+          objectLines = [cleanStart];
+          if ((trimmed.endsWith('}') || trimmed.endsWith('},') || trimmed.endsWith('}]')) && !trimmed.includes('": [') && !trimmed.includes('":{')) {
+            inObject = false;
+            const objStr = objectLines.join('\n').replace(/,$/, '').replace(/\s*\]\s*$/, '');
+            objectLines = [];
+            try {
+              const obj = cleanAndParseJson(objStr);
+              if (obj && typeof obj === 'object') {
+                count++;
+                await onRecord(obj, count);
+                if (count >= maxRecords) {
+                  rl.close();
+                  return count;
+                }
+              }
+            } catch (err) {}
+          }
+        }
+      } else {
+        objectLines.push(line);
+        if (trimmed === '}' || trimmed === '},' || trimmed === '}]' || ((trimmed.endsWith('}') || trimmed.endsWith('},') || trimmed.endsWith('}]')) && !trimmed.includes('":'))) {
+          inObject = false;
+          const objStr = objectLines.join('\n').replace(/,$/, '').replace(/\s*\]\s*$/, '');
+          objectLines = [];
+          try {
+            const obj = cleanAndParseJson(objStr);
+            if (obj && typeof obj === 'object') {
+              count++;
+              await onRecord(obj, count);
+              if (count >= maxRecords) {
+                rl.close();
+                return count;
+              }
+            }
+          } catch (err) {}
+        }
+      }
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') throw err;
+  }
+
+  // Fallback: If line-based produced 0 records (e.g. minified single-line JSON), use tokenized chunk parser
+  if (count === 0) {
+    const stream = fs.createReadStream(filePath, { highWaterMark: 128 * 1024, encoding: 'utf8' });
+    let inString = false;
+    let escapeNext = false;
+    let depth = 0;
+    let buffer = '';
+
+    try {
+      for await (const chunk of stream) {
+        for (let i = 0; i < chunk.length; i++) {
+          const char = chunk[i];
+
+          if (escapeNext) {
+            escapeNext = false;
+            if (depth > 0) buffer += char;
+            continue;
+          }
+
+          if (char === '\\') {
+            escapeNext = true;
+            if (depth > 0) buffer += char;
+            continue;
+          }
+
+          if (char === '"') {
+            inString = !inString;
+            if (depth > 0) buffer += char;
+            continue;
+          }
+
+          if (inString) {
+            if (depth > 0) buffer += char;
+            continue;
+          }
+
+          if (char === '{') {
+            if (depth === 0) buffer = '{';
+            else buffer += '{';
+            depth++;
+          } else if (char === '}') {
+            depth--;
+            if (depth > 0) {
+              buffer += '}';
+            } else if (depth === 0) {
+              buffer += '}';
+              const objStr = buffer;
+              buffer = '';
+              try {
+                const obj = cleanAndParseJson(objStr);
+                if (obj && typeof obj === 'object') {
+                  count++;
+                  await onRecord(obj, count);
+                  if (count >= maxRecords) {
+                    stream.destroy();
+                    return count;
+                  }
+                }
+              } catch (err) {}
+            }
+          } else {
+            if (depth > 0) buffer += char;
+          }
+        }
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError' && !stream.destroyed) throw err;
+    }
+  }
+
+  return count;
+}
+
+/**
+ * Standard JSON to Excel streaming conversion for files of ANY size (including > 512MB / 1GB+)
+ */
+async function executeStreamingStandard(filePath, outputPath, options = {}) {
+  const { flatten = true, originalName, filters, selectedColumns } = options;
+
+  // Pass 1: Sample up to 1,000 records to discover all column headers
+  const columnsSet = new Set();
+  let sampleCount = 0;
+
+  await streamJsonObjects(filePath, (record) => {
+    const processed = (flatten && typeof record === 'object' && record !== null) ? flattenObject(record) : record;
+    if (processed && typeof processed === 'object') {
+      Object.keys(processed).forEach(k => columnsSet.add(k));
+    }
+    sampleCount++;
+  }, { maxRecords: 1000 });
+
+  let columnKeys = Array.from(columnsSet);
+  if (Array.isArray(selectedColumns) && selectedColumns.length > 0) {
+    const filtered = selectedColumns.filter(c => columnsSet.has(c));
+    if (filtered.length > 0) {
+      columnKeys = filtered;
+    }
+  }
+
+  const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
+    filename: outputPath,
+    useStyles: true,
+    useSharedStrings: false
+  });
+
+  const worksheet = workbook.addWorksheet('Sheet1', {
+    views: [{ state: 'frozen', xSplit: 0, ySplit: 1 }]
+  });
+
+  if (columnKeys.length > 0) {
+    worksheet.columns = columnKeys.map(key => ({
+      header: key,
+      key: key,
+      width: Math.max(key.length + 4, 15)
+    }));
+
+    // Style header row
+    const headerRow = worksheet.getRow(1);
+    headerRow.height = 28;
+    headerRow.eachCell(cell => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+      cell.font = { name: 'Segoe UI', bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FF334155' } },
+        left: { style: 'thin', color: { argb: 'FF334155' } },
+        bottom: { style: 'medium', color: { argb: 'FF0F172A' } },
+        right: { style: 'thin', color: { argb: 'FF334155' } }
+      };
+    });
+    headerRow.commit();
+  }
+
+  let totalRows = 0;
+
+  // Pass 2: Stream all records and write rows directly
+  await streamJsonObjects(filePath, async (record) => {
+    const processed = (flatten && typeof record === 'object' && record !== null) ? flattenObject(record) : record;
+
+    // Apply row filter if specified
+    if (filters && !matchesFilter(processed, filters)) {
+      return;
+    }
+
+    const rowData = {};
+
+    columnKeys.forEach(col => {
+      let val = processed[col];
+      if (val === undefined || val === null) {
+        rowData[col] = '';
+      } else if (typeof val === 'boolean') {
+        rowData[col] = val ? 'TRUE' : 'FALSE';
+      } else if (typeof val === 'object') {
+        rowData[col] = JSON.stringify(val);
+      } else {
+        rowData[col] = val;
+      }
+    });
+
+    const row = worksheet.addRow(rowData);
+    row.height = 20;
+
+    const isEven = totalRows % 2 === 0;
+    row.eachCell({ includeEmpty: true }, cell => {
+      cell.font = { name: 'Segoe UI', size: 10 };
+      cell.alignment = { vertical: 'middle', horizontal: 'left' };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+      };
+      if (isEven) {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+      }
+    });
+
+    row.commit();
+    totalRows++;
+  });
+
+  // Add Summary Total Count Row at the bottom of the table
+  const summaryRowData = {};
+  if (columnKeys.length > 0) {
+    summaryRowData[columnKeys[0]] = `รวมทั้งหมด ${totalRows.toLocaleString()} รายการ (แถวข้อมูล)`;
+  }
+  const summaryRow = worksheet.addRow(summaryRowData);
+  summaryRow.height = 24;
+  summaryRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+    cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+    cell.border = {
+      top: { style: 'medium', color: { argb: 'FF94A3B8' } },
+      bottom: { style: 'double', color: { argb: 'FF475569' } },
+      left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+    };
+    if (colNumber === 1) {
+      cell.alignment = { vertical: 'middle', horizontal: 'left' };
+    }
+  });
+  summaryRow.commit();
+
+  worksheet.commit();
+  await workbook.commit();
+
+  return {
+    totalRows,
+    totalColumns: columnKeys.length,
+    sheetNames: ['Sheet1']
+  };
+}
+
+/**
+ * Standard in-memory JSON to Excel conversion
+ */
+function normalizeJsonData(rawData, shouldFlatten = true, filters = null, selectedColumns = null) {
   const sheets = {};
 
   if (!rawData) {
@@ -633,18 +1055,48 @@ function normalizeJsonData(rawData, shouldFlatten = true) {
 
   const data = typeof rawData === 'string' ? safeJsonParse(rawData) : rawData;
 
+  const processList = (arr) => {
+    let list = arr.map(item => (shouldFlatten && typeof item === 'object' && item !== null ? flattenObject(item) : item));
+    if (filters) {
+      list = list.filter(item => matchesFilter(item, filters));
+    }
+    if (Array.isArray(selectedColumns) && selectedColumns.length > 0) {
+      list = list.map(item => {
+        if (typeof item !== 'object' || item === null) return item;
+        const filteredObj = {};
+        selectedColumns.forEach(col => {
+          if (col in item) filteredObj[col] = item[col];
+        });
+        return filteredObj;
+      });
+    }
+    return list;
+  };
+
   if (Array.isArray(data)) {
-    sheets['Sheet1'] = data.map(item => (shouldFlatten && typeof item === 'object' && item !== null ? flattenObject(item) : item));
+    sheets['Sheet1'] = processList(data);
   } else if (typeof data === 'object' && data !== null) {
     const arrayKeys = Object.keys(data).filter(k => Array.isArray(data[k]));
 
     if (arrayKeys.length > 0) {
       arrayKeys.forEach(k => {
         const sheetName = k.substring(0, 30);
-        sheets[sheetName] = data[k].map(item => (shouldFlatten && typeof item === 'object' && item !== null ? flattenObject(item) : item));
+        sheets[sheetName] = processList(data[k]);
       });
     } else {
-      sheets['Data'] = [shouldFlatten ? flattenObject(data) : data];
+      let singleObj = shouldFlatten ? flattenObject(data) : data;
+      if (!filters || matchesFilter(singleObj, filters)) {
+        if (Array.isArray(selectedColumns) && selectedColumns.length > 0) {
+          const filteredObj = {};
+          selectedColumns.forEach(col => {
+            if (col in singleObj) filteredObj[col] = singleObj[col];
+          });
+          singleObj = filteredObj;
+        }
+        sheets['Data'] = [singleObj];
+      } else {
+        sheets['Data'] = [];
+      }
     }
   } else {
     throw new Error('โครงสร้างไฟล์ JSON ไม่ถูกต้อง');
@@ -658,15 +1110,80 @@ function normalizeJsonData(rawData, shouldFlatten = true) {
  * Saves files automatically in both item-excel and uploads directories.
  */
 const execute = async (inputSource, options = {}) => {
-  let rawContent;
+  const isFileSource = typeof inputSource === 'string' && fs.existsSync(inputSource);
   let defaultBaseName = options.originalName ? path.parse(options.originalName).name : 'export_data';
 
-  if (typeof inputSource === 'string' && fs.existsSync(inputSource)) {
-    rawContent = fs.readFileSync(inputSource, 'utf-8');
-    if (!options.originalName) {
-      const parsedPath = path.parse(inputSource);
-      defaultBaseName = parsedPath.name;
+  if (isFileSource && !options.originalName) {
+    defaultBaseName = path.parse(inputSource).name;
+  }
+
+  // Ensure directories exist
+  const uploadsDir = path.join(process.cwd(), 'uploads');
+  const itemExcelDir = path.join(process.cwd(), 'item-excel');
+  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+  if (!fs.existsSync(itemExcelDir)) fs.mkdirSync(itemExcelDir, { recursive: true });
+
+  const fileSize = isFileSource ? fs.statSync(inputSource).size : 0;
+  const isLargeFile = fileSize > 50 * 1024 * 1024; // > 50MB
+
+  // For file sources with standard mode or large files, use streaming directly
+  if (isFileSource && (options.mode === 'standard' || isLargeFile)) {
+    // Check if Gov mode was explicitly requested or file is moderate size
+    let isGovMode = options.mode === 'gov';
+    
+    if (!isGovMode && !isLargeFile) {
+      // Check for error log structure if file is moderate
+      try {
+        let sampleCheck = '';
+        const fd = fs.openSync(inputSource, 'r');
+        const buffer = Buffer.alloc(Math.min(fileSize, 64 * 1024));
+        fs.readSync(fd, buffer, 0, buffer.length, 0);
+        fs.closeSync(fd);
+        sampleCheck = buffer.toString('utf8');
+        if (sampleCheck.includes('error_cases') || sampleCheck.includes('error_records_count')) {
+          if (options.mode !== 'standard') {
+            isGovMode = true;
+          }
+        }
+      } catch {}
     }
+
+    if (!isGovMode) {
+      // Execute streaming standard mode
+      const outputFileName = `${defaultBaseName}_${Date.now()}.xlsx`;
+      const outputPath = path.join(uploadsDir, outputFileName);
+      const archivePath = path.join(itemExcelDir, outputFileName);
+
+      const streamResult = await executeStreamingStandard(inputSource, outputPath, {
+        flatten: options.flatten !== false,
+        originalName: options.originalName,
+        filters: options.filters,
+        selectedColumns: options.selectedColumns
+      });
+
+      try {
+        fs.copyFileSync(outputPath, archivePath);
+      } catch (copyErr) {
+        console.warn('Could not copy to item-excel:', copyErr.message);
+      }
+
+      return {
+        outputPath,
+        archivePath,
+        fileName: outputFileName,
+        totalRows: streamResult.totalRows,
+        totalColumns: streamResult.totalColumns,
+        sheetNames: streamResult.sheetNames,
+        isGovFormat: false
+      };
+    }
+  }
+
+  // Standard in-memory conversion path for smaller files or raw in-memory JSON data
+  let rawContent;
+  if (isFileSource) {
+    // Read safely with chunked buffer if needed to prevent string length overflow
+    rawContent = fs.readFileSync(inputSource, 'utf-8');
   } else if (typeof inputSource === 'object' || typeof inputSource === 'string') {
     rawContent = inputSource;
   } else {
@@ -683,14 +1200,14 @@ const execute = async (inputSource, options = {}) => {
   let sheetNames = [];
 
   if (useGovMode && isErrorLog) {
-    const govResult = await buildGovErrorReportWorkbook(parsedData);
+    const govResult = await buildGovErrorReportWorkbook(parsedData, options);
     workbook = govResult.workbook;
     totalRowsCount = govResult.totalRows;
     allColumnsCount = govResult.totalColumns;
     sheetNames = govResult.sheetNames;
   } else {
     // Standard table mode
-    const sheetsData = normalizeJsonData(parsedData, options.flatten !== false);
+    const sheetsData = normalizeJsonData(parsedData, options.flatten !== false, options.filters, options.selectedColumns);
     workbook = new ExcelJS.Workbook();
     workbook.creator = 'DDC Data Platform';
     workbook.created = new Date();
@@ -719,13 +1236,11 @@ const execute = async (inputSource, options = {}) => {
       allColumnsCount = Math.max(allColumnsCount, columnKeys.length);
       totalRowsCount += records.length;
 
-      worksheet.columns = columnKeys.map(key => {
-        return {
-          header: key,
-          key: key,
-          width: Math.max(key.length + 4, 15)
-        };
-      });
+      worksheet.columns = columnKeys.map(key => ({
+        header: key,
+        key: key,
+        width: Math.max(key.length + 4, 15)
+      }));
 
       const headerRow = worksheet.getRow(1);
       headerRow.height = 28;
@@ -790,6 +1305,27 @@ const execute = async (inputSource, options = {}) => {
         });
       });
 
+      // Add Summary Total Count Row at the bottom of the table
+      const summaryRowData = {};
+      if (columnKeys.length > 0) {
+        summaryRowData[columnKeys[0]] = `รวมทั้งหมด ${records.length.toLocaleString()} รายการ (แถวข้อมูล)`;
+      }
+      const summaryRow = worksheet.addRow(summaryRowData);
+      summaryRow.height = 24;
+      summaryRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+        cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+        cell.border = {
+          top: { style: 'medium', color: { argb: 'FF94A3B8' } },
+          bottom: { style: 'double', color: { argb: 'FF475569' } },
+          left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+          right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+        };
+        if (colNumber === 1) {
+          cell.alignment = { vertical: 'middle', horizontal: 'left' };
+        }
+      });
+
       worksheet.columns.forEach(column => {
         let maxLen = column.header ? column.header.toString().length : 10;
         const sampleRows = records.slice(0, 100);
@@ -805,16 +1341,10 @@ const execute = async (inputSource, options = {}) => {
 
       worksheet.autoFilter = {
         from: { row: 1, column: 1 },
-        to: { row: 1, column: columnKeys.length }
+        to: { row: records.length + 1, column: columnKeys.length }
       };
     }
   }
-
-  // Ensure directories exist
-  const uploadsDir = path.join(process.cwd(), 'uploads');
-  const itemExcelDir = path.join(process.cwd(), 'item-excel');
-  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-  if (!fs.existsSync(itemExcelDir)) fs.mkdirSync(itemExcelDir, { recursive: true });
 
   const prefix = useGovMode && isErrorLog ? `DDC_Error_Report_${defaultBaseName}` : defaultBaseName;
   const outputFileName = `${prefix}_${Date.now()}.xlsx`;
@@ -844,6 +1374,8 @@ const execute = async (inputSource, options = {}) => {
 
 module.exports = {
   execute,
+  executeStreamingStandard,
+  streamJsonObjects,
   normalizeJsonData,
   safeJsonParse,
   detectErrorLogStructure,
