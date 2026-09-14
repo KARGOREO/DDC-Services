@@ -164,6 +164,25 @@ router.get('/json-to-excel/sample-bma', reportController.convertSampleUserBmaHan
  */
 router.get('/json-to-excel/sample-gov-test', reportController.convertSampleGovTestHandler);
 
+/**
+ * @swagger
+ * /api/report/json-to-excel/sample-error0913:
+ *   get:
+ *     summary: แปลงไฟล์ตัวอย่าง error09_13.json (ตรวจจับข้อมูลซ้ำข้ามวัน) เป็นรายงาน Excel ทันที
+ *     tags: [Reports]
+ *     parameters:
+ *       - in: query
+ *         name: duplicateAction
+ *         schema:
+ *           type: string
+ *           enum: [all, only_duplicates, remove_duplicates]
+ *         description: การจัดการข้อมูลซ้ำ
+ *     responses:
+ *       200:
+ *         description: สำเร็จ ส่งคืนไฟล์ Excel รูปแบบราชการพร้อมแผ่นงานรายการข้อมูลซ้ำ
+ */
+router.get('/json-to-excel/sample-error0913', reportController.convertSampleGovError0913Handler);
+
 module.exports = router;
 
 

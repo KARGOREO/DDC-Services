@@ -61,6 +61,56 @@ import CheckBoxOutlineBlankIcon from '@mui/icons-material/CheckBoxOutlineBlank';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import DifferenceIcon from '@mui/icons-material/Difference';
+import GroupWorkIcon from '@mui/icons-material/GroupWork';
+import FilterListIcon from '@mui/icons-material/FilterList';
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import DoneAllIcon from '@mui/icons-material/DoneAll';
+
+// Client-side duplicate analyzer
+function analyzeDuplicatesClient(items, fields = ['citizen_id']) {
+  if (!items || items.length === 0) return { groups: [], totalDupRows: 0, keySet: new Set(), indexSet: new Set() };
+  const fieldList = Array.isArray(fields) && fields.length > 0 ? fields : ['citizen_id'];
+  const map = new Map();
+
+  items.forEach((item, idx) => {
+    const vals = fieldList.map(f => {
+      const v = item[f];
+      return (v !== null && v !== undefined) ? String(v).trim() : '';
+    });
+    if (vals.every(v => v === '' || v === '-' || v.toLowerCase() === 'null')) {
+      return;
+    }
+    const key = vals.join(' | ');
+    if (!map.has(key)) {
+      map.set(key, []);
+    }
+    map.get(key).push({ item, idx });
+  });
+
+  const groups = [];
+  let totalDupRows = 0;
+  const keySet = new Set();
+  const indexSet = new Set();
+
+  map.forEach((entries, key) => {
+    if (entries.length > 1) {
+      groups.push({
+        key,
+        count: entries.length,
+        items: entries.map(e => e.item),
+        indices: entries.map(e => e.idx)
+      });
+      totalDupRows += entries.length;
+      keySet.add(key);
+      entries.forEach(e => indexSet.add(e.idx));
+    }
+  });
+
+  return { groups, totalDupRows, keySet, indexSet };
+}
 
 // Operator definitions with friendly Thai labels
 const FILTER_OPERATORS = [
@@ -180,7 +230,13 @@ export default function JsonToExcelPage() {
   const [selectedColumns, setSelectedColumns] = useState([]);
   const [columnSearch, setColumnSearch] = useState('');
   const [showFilterSettings, setShowFilterSettings] = useState(true);
-  const [activeTab, setActiveTab] = useState('filter'); // 'filter' | 'columns'
+  const [activeTab, setActiveTab] = useState('filter'); // 'filter' | 'columns' | 'duplicate'
+
+  // Duplicate Check State
+  const [duplicateFields, setDuplicateFields] = useState(['citizen_id']);
+  const [duplicateAction, setDuplicateAction] = useState('all'); // 'all' | 'only_duplicates' | 'remove_duplicates'
+  const [duplicateSearch, setDuplicateSearch] = useState('');
+  const [expandedDupGroup, setExpandedDupGroup] = useState(null);
 
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
@@ -190,6 +246,8 @@ export default function JsonToExcelPage() {
     setJsonFile(file);
     setFilterRules([]);
     setColumnSearch('');
+    setDuplicateSearch('');
+    setDuplicateAction('all');
     
     if (!file) {
       setFileStats(null);
@@ -197,6 +255,7 @@ export default function JsonToExcelPage() {
       setAvailableFields([]);
       setParsedItems([]);
       setSelectedColumns([]);
+      setDuplicateFields(['citizen_id']);
       return;
     }
 
@@ -210,7 +269,9 @@ export default function JsonToExcelPage() {
         rows: 'พร้อมสำหรับการแปลง (Streaming)',
         columns: '-',
         hasErrorCases: false,
-        sampleKeys: []
+        sampleKeys: [],
+        duplicateCount: 0,
+        duplicateGroupsCount: 0
       });
     };
 
@@ -249,8 +310,10 @@ export default function JsonToExcelPage() {
             }
           }
 
+          const defaultDupKey = sampleKeys.includes('citizen_id') ? ['citizen_id'] : (sampleKeys.includes('uuid') ? ['uuid'] : (sampleKeys[0] ? [sampleKeys[0]] : ['citizen_id']));
           setAvailableFields(sampleKeys);
           setSelectedColumns(sampleKeys);
+          setDuplicateFields(defaultDupKey);
           setParsedItems([]);
 
           setFileStats({
@@ -258,7 +321,9 @@ export default function JsonToExcelPage() {
             rows: 'ประมวลผลขณะแปลงไฟล์ (Streaming Mode)',
             columns: sampleKeys.length > 0 ? `${sampleKeys.length}+ คอลัมน์` : '-',
             hasErrorCases: false,
-            sampleKeys: sampleKeys.slice(0, 10)
+            sampleKeys: sampleKeys.slice(0, 10),
+            duplicateCount: 0,
+            duplicateGroupsCount: 0
           });
           return;
         }
@@ -279,7 +344,7 @@ export default function JsonToExcelPage() {
         const rawList = Array.isArray(parsed) ? parsed : (typeof parsed === 'object' && parsed !== null ? [parsed] : []);
         const sample = rawList[0] || {};
         
-        // Detect Error Log structure (like test.json)
+        // Detect Error Log structure (like test.json or error09_13.json)
         const hasErrorCases = 'error_cases' in sample || ('error_records_count' in sample && 'total_records' in sample);
         setIsErrorLogDetected(hasErrorCases);
         if (hasErrorCases) {
@@ -296,10 +361,12 @@ export default function JsonToExcelPage() {
           rawList.forEach(item => {
             let cases = item.error_cases;
             if (typeof cases === 'string') {
-              try { cases = JSON.parse(cases); } catch { cases = []; }
+              try { cases = JSON.parse(cases); } catch {
+                try { cases = JSON.parse(cases.replace(/\\'/g, "'").replace(/\\\\"/g, '\\"')); } catch { cases = []; }
+              }
             }
             if (Array.isArray(cases)) {
-              cases.forEach(c => allErrors.push(c));
+              cases.forEach(c => allErrors.push({ ...c, log_date: item.log_date || c.log_date }));
             }
           });
           flatItems = allErrors.map(it => flatten ? flattenObjectClient(it) : it);
@@ -314,9 +381,15 @@ export default function JsonToExcelPage() {
         });
 
         const extractedFields = Array.from(allKeysSet);
+        const defaultDupKey = allKeysSet.has('citizen_id') ? ['citizen_id'] : (allKeysSet.has('uuid') ? ['uuid'] : (extractedFields[0] ? [extractedFields[0]] : ['citizen_id']));
+
         setAvailableFields(extractedFields);
         setSelectedColumns(extractedFields);
+        setDuplicateFields(defaultDupKey);
         setParsedItems(flatItems);
+
+        // Analyze duplicates immediately
+        const dupPreview = analyzeDuplicatesClient(flatItems, defaultDupKey);
 
         if (Array.isArray(parsed)) {
           let errorCasesCount = 0;
@@ -333,7 +406,7 @@ export default function JsonToExcelPage() {
                   cases = JSON.parse(cases);
                 } catch {
                   try {
-                    cases = JSON.parse(cases.replace(/\\\\"/g, '\\"'));
+                    cases = JSON.parse(cases.replace(/\\'/g, "'").replace(/\\\\"/g, '\\"'));
                   } catch {
                     cases = [];
                   }
@@ -352,7 +425,9 @@ export default function JsonToExcelPage() {
             totalRecordsSum,
             validImportedSum,
             errorCasesCount,
-            sampleKeys: extractedFields.slice(0, 10)
+            sampleKeys: extractedFields.slice(0, 10),
+            duplicateCount: dupPreview.totalDupRows,
+            duplicateGroupsCount: dupPreview.groups.length
           });
         } else if (typeof parsed === 'object') {
           setFileStats({
@@ -360,7 +435,9 @@ export default function JsonToExcelPage() {
             rows: 1,
             columns: extractedFields.length,
             hasErrorCases: false,
-            sampleKeys: extractedFields.slice(0, 10)
+            sampleKeys: extractedFields.slice(0, 10),
+            duplicateCount: dupPreview.totalDupRows,
+            duplicateGroupsCount: dupPreview.groups.length
           });
         }
       } catch (err) {
@@ -369,7 +446,9 @@ export default function JsonToExcelPage() {
           rows: 'พร้อมสำหรับการแปลง',
           columns: '-',
           hasErrorCases: false,
-          sampleKeys: []
+          sampleKeys: [],
+          duplicateCount: 0,
+          duplicateGroupsCount: 0
         });
       }
     };
@@ -433,23 +512,76 @@ export default function JsonToExcelPage() {
     });
   };
 
+  // Duplicate Check Helpers
+  const duplicateAnalysis = useMemo(() => {
+    return analyzeDuplicatesClient(parsedItems, duplicateFields);
+  }, [parsedItems, duplicateFields]);
+
+  const filteredDuplicateGroups = useMemo(() => {
+    if (!duplicateSearch.trim()) return duplicateAnalysis.groups;
+    const q = duplicateSearch.toLowerCase();
+    return duplicateAnalysis.groups.filter(grp => {
+      if (grp.key.toLowerCase().includes(q)) return true;
+      return grp.items.some(it => {
+        const name = `${it.firstname || ''} ${it.lastname || ''}`.toLowerCase();
+        const reason = (it.error_reason || '').toLowerCase();
+        const hosp = (it.hospital_code || '').toLowerCase();
+        const date = (it.log_date || it.patient_sick || '').toLowerCase();
+        return name.includes(q) || reason.includes(q) || hosp.includes(q) || date.includes(q);
+      });
+    });
+  }, [duplicateAnalysis.groups, duplicateSearch]);
+
+  const handleToggleDuplicateField = (field) => {
+    setDuplicateFields(prev => {
+      if (prev.includes(field)) {
+        const next = prev.filter(f => f !== field);
+        return next.length > 0 ? next : [field]; // Keep at least one
+      } else {
+        return [...prev, field];
+      }
+    });
+  };
+
   // Filtered preview row count
   const activeRules = useMemo(() => {
     return filterRules.filter(r => r && r.field && r.field.trim() !== '');
   }, [filterRules]);
 
   const filteredPreviewCount = useMemo(() => {
-    if (parsedItems.length === 0 || activeRules.length === 0) {
-      return parsedItems.length;
+    if (parsedItems.length === 0) return 0;
+    
+    let items = parsedItems;
+
+    // Apply filter rules
+    if (activeRules.length > 0) {
+      items = items.filter(item => {
+        if (filterLogic === 'OR') {
+          return activeRules.some(rule => testClientRule(item, rule));
+        } else {
+          return activeRules.every(rule => testClientRule(item, rule));
+        }
+      });
     }
-    return parsedItems.filter(item => {
-      if (filterLogic === 'OR') {
-        return activeRules.some(rule => testClientRule(item, rule));
-      } else {
-        return activeRules.every(rule => testClientRule(item, rule));
-      }
-    }).length;
-  }, [parsedItems, activeRules, filterLogic]);
+
+    // Apply duplicate action filter
+    if (duplicateAction === 'only_duplicates') {
+      items = items.filter(item => duplicateAnalysis.keySet.has(
+        duplicateFields.map(f => item[f] !== null && item[f] !== undefined ? String(item[f]).trim() : '').join(' | ')
+      ));
+    } else if (duplicateAction === 'remove_duplicates') {
+      const seen = new Set();
+      items = items.filter(item => {
+        const k = duplicateFields.map(f => item[f] !== null && item[f] !== undefined ? String(item[f]).trim() : '').join(' | ');
+        if (!k || k === '' || k === '-' || k.toLowerCase() === 'null') return true;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+    }
+
+    return items.length;
+  }, [parsedItems, activeRules, filterLogic, duplicateAction, duplicateAnalysis, duplicateFields]);
 
   const filteredColumnsList = useMemo(() => {
     if (!columnSearch.trim()) return availableFields;
@@ -457,7 +589,7 @@ export default function JsonToExcelPage() {
     return availableFields.filter(f => f.toLowerCase().includes(q));
   }, [availableFields, columnSearch]);
 
-  const handleSubmit = async (overrideMode) => {
+  const handleSubmit = async (overrideMode, overrideDupAction) => {
     if (!jsonFile) {
       return Swal.fire({
         title: 'แจ้งเตือน',
@@ -468,12 +600,15 @@ export default function JsonToExcelPage() {
     }
 
     const currentMode = overrideMode || exportMode;
+    const currentDupAction = overrideDupAction || duplicateAction;
     setLoading(true);
 
     const formData = new FormData();
     formData.append('jsonFile', jsonFile);
     formData.append('flatten', flatten ? 'true' : 'false');
     formData.append('mode', currentMode);
+    formData.append('duplicateAction', currentDupAction);
+    formData.append('duplicateFields', JSON.stringify(duplicateFields));
 
     // Append Filter Rules if configured
     if (activeRules.length > 0) {
@@ -508,7 +643,8 @@ export default function JsonToExcelPage() {
         }
       } else {
         const baseName = jsonFile.name.replace(/\.[^/.]+$/, "");
-        filename = `${currentMode === 'gov' ? 'DDC_Gov_Report_' : 'Excel_Export_'}${baseName}.xlsx`;
+        const dupTag = currentDupAction === 'only_duplicates' ? '_Only_Duplicates' : (currentDupAction === 'remove_duplicates' ? '_Deduplicated' : '');
+        filename = `${currentMode === 'gov' ? 'DDC_Gov_Report_' : 'Excel_Export_'}${baseName}${dupTag}.xlsx`;
       }
 
       link.setAttribute('download', filename);
@@ -516,9 +652,18 @@ export default function JsonToExcelPage() {
       link.click();
       link.remove();
 
+      let dupMessage = '';
+      if (currentDupAction === 'only_duplicates') {
+        dupMessage = `<br/><span style="color:#ea580c">🔍 กรองเฉพาะเคสที่ซ้ำกัน (${duplicateAnalysis.totalDupRows} รายการ)</span>`;
+      } else if (currentDupAction === 'remove_duplicates') {
+        dupMessage = `<br/><span style="color:#059669">✂️ ตัดรายการซ้ำออกเรียบร้อยแล้ว</span>`;
+      } else if (duplicateAnalysis.totalDupRows > 0) {
+        dupMessage = `<br/><span style="color:#0284c7">📑 ตรวจพบข้อมูลซ้ำ ${duplicateAnalysis.totalDupRows} เคส (มีแผ่นงาน "รายการข้อมูลซ้ำ" ให้ในไฟล์)</span>`;
+      }
+
       Swal.fire({
         title: 'แปลงไฟล์สำเร็จ!',
-        html: `ระบบได้แปลงไฟล์เป็น <strong>${filename}</strong> ${activeRules.length > 0 ? `<br/><span style="color:#059669">กรองตาม ${activeRules.length} เงื่อนไขเรียบร้อย</span>` : ''} และจัดเก็บสำเนาไว้ในโฟลเดอร์ <code>item-excel</code> เรียบร้อยแล้ว`,
+        html: `ระบบได้แปลงไฟล์เป็น <strong>${filename}</strong> ${activeRules.length > 0 ? `<br/><span style="color:#059669">กรองตาม ${activeRules.length} เงื่อนไข</span>` : ''}${dupMessage} และจัดเก็บสำเนาไว้ในโฟลเดอร์ <code>item-excel</code> เรียบร้อยแล้ว`,
         icon: 'success',
         confirmButtonColor: '#10b981'
       });
@@ -542,6 +687,36 @@ export default function JsonToExcelPage() {
         icon: 'error',
         confirmButtonColor: '#f43f5e'
       });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Quick convert error09_13.json (Duplicate Test Sample)
+  const handleConvertSampleError0913 = async (action = 'all') => {
+    setLoading(true);
+    try {
+      const response = await axios.get(`http://localhost:3000/api/report/json-to-excel/sample-error0913?duplicateAction=${action}`, {
+        responseType: 'blob'
+      });
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      const downloadName = `DDC_Error_Report_error09_13${action === 'only_duplicates' ? '_Only_Duplicates' : ''}.xlsx`;
+      link.setAttribute('download', downloadName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      Swal.fire({
+        title: 'แปลงตัวอย่าง error09_13.json สำเร็จ!',
+        html: `ดาวน์โหลดไฟล์ <strong>${downloadName}</strong> พร้อมแผ่นงานวิเคราะห์ข้อมูลซ้ำ (Duplicate Cases Sheet) เรียบร้อยแล้ว`,
+        icon: 'success',
+        confirmButtonColor: '#ea580c'
+      });
+    } catch (error) {
+      Swal.fire('ข้อผิดพลาด', 'ไม่สามารถสร้างไฟล์ตัวอย่าง error09_13.json ได้', 'error');
     } finally {
       setLoading(false);
     }
@@ -684,6 +859,27 @@ export default function JsonToExcelPage() {
           </Button>
 
           <Button
+            variant="contained"
+            onClick={() => handleConvertSampleError0913('all')}
+            disabled={loading}
+            startIcon={<WarningAmberIcon />}
+            sx={{
+              borderRadius: 3,
+              bgcolor: '#7c2d12',
+              color: 'white',
+              py: 1.2,
+              px: 3,
+              fontWeight: 700,
+              boxShadow: '0 4px 14px rgba(124, 45, 18, 0.3)',
+              '&:hover': {
+                bgcolor: '#9a3412'
+              }
+            }}
+          >
+            ทดสอบ error09_13.json (เคสซ้ำข้ามวัน)
+          </Button>
+
+          <Button
             variant="outlined"
             onClick={handleConvertSampleBma}
             disabled={loading}
@@ -721,7 +917,7 @@ export default function JsonToExcelPage() {
                 file={jsonFile} 
                 setFile={handleFileChange} 
                 accept=".json"
-                label="เลือกหรือลากไฟล์ JSON มาวางที่นี่ (เช่น user_bma.json หรือ test.json)"
+                label="เลือกหรือลากไฟล์ JSON มาวางที่นี่ (เช่น user_bma.json หรือ error09_13.json)"
                 helperText="รองรับทั้งไฟล์ตารางข้อมูลทั่วไป (General Array/Object) หรือบันทึก Error Log"
                 icon={
                   <Box sx={{
@@ -753,15 +949,26 @@ export default function JsonToExcelPage() {
                     <Typography variant="subtitle2" sx={{ fontWeight: 700, color: isDark ? '#38bdf8' : '#0284c7' }}>
                       ผลการวิเคราะห์ไฟล์ JSON:
                     </Typography>
-                    {isErrorLogDetected && (
-                      <Chip 
-                        icon={<CheckCircleOutlinedIcon sx={{ fontSize: 16 }} />}
-                        label="ตรวจพบ Error Cases Log (แนะนำรูปแบบราชการ)" 
-                        color="success" 
-                        size="small" 
-                        sx={{ fontWeight: 700 }} 
-                      />
-                    )}
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      {isErrorLogDetected && (
+                        <Chip 
+                          icon={<CheckCircleOutlinedIcon sx={{ fontSize: 16 }} />}
+                          label="ตรวจพบ Error Cases Log (แนะนำรูปแบบราชการ)" 
+                          color="success" 
+                          size="small" 
+                          sx={{ fontWeight: 700 }} 
+                        />
+                      )}
+                      {duplicateAnalysis.totalDupRows > 0 && (
+                        <Chip 
+                          icon={<WarningAmberIcon sx={{ fontSize: 16 }} />}
+                          label={`พบข้อมูลซ้ำ ${duplicateAnalysis.totalDupRows} แถว (${duplicateAnalysis.groups.length} กลุ่ม)`} 
+                          color="warning" 
+                          size="small" 
+                          sx={{ fontWeight: 700 }} 
+                        />
+                      )}
+                    </Box>
                   </Box>
 
                   <Grid container spacing={2}>
@@ -793,6 +1000,55 @@ export default function JsonToExcelPage() {
                       </>
                     )}
                   </Grid>
+
+                  {/* Highlight Duplicate Banner */}
+                  {duplicateAnalysis.totalDupRows > 0 && (
+                    <Box sx={{ 
+                      mt: 2, 
+                      p: 1.5, 
+                      px: 2, 
+                      borderRadius: 2, 
+                      bgcolor: isDark ? 'rgba(234, 88, 12, 0.15)' : '#fff7ed', 
+                      border: `1px solid ${isDark ? 'rgba(234, 88, 12, 0.3)' : '#fed7aa'}`,
+                      display: 'flex', 
+                      flexWrap: 'wrap', 
+                      alignItems: 'center', 
+                      justifyContent: 'space-between',
+                      gap: 1.5
+                    }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2 }}>
+                        <WarningAmberIcon sx={{ color: '#ea580c', fontSize: 22 }} />
+                        <Box>
+                          <Typography variant="body2" sx={{ fontWeight: 700, color: '#c2410c' }}>
+                            ตรวจพบข้อมูลซ้ำกัน {duplicateAnalysis.totalDupRows} รายการ ({duplicateAnalysis.groups.length} กลุ่ม)
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: isDark ? '#fdba74' : '#9a3412' }}>
+                            เช่น เลขประจำตัวประชาชน (citizen_id) ซ้ำข้ามวัน หรือ UUID เดียวกัน
+                          </Typography>
+                        </Box>
+                      </Box>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        onClick={() => {
+                          setActiveTab('duplicate');
+                          setShowFilterSettings(true);
+                        }}
+                        startIcon={<DifferenceIcon sx={{ fontSize: 16 }} />}
+                        sx={{
+                          borderRadius: 2,
+                          bgcolor: '#ea580c',
+                          color: 'white',
+                          fontWeight: 700,
+                          fontSize: '0.75rem',
+                          textTransform: 'none',
+                          '&:hover': { bgcolor: '#c2410c' }
+                        }}
+                      >
+                        ตรวจสอบ / จัดการข้อมูลซ้ำ
+                      </Button>
+                    </Box>
+                  )}
 
                   {fileStats.sampleKeys && fileStats.sampleKeys.length > 0 && (
                     <Box sx={{ mt: 2 }}>
@@ -832,10 +1088,10 @@ export default function JsonToExcelPage() {
                       </Box>
                       <Box>
                         <Typography variant="subtitle1" sx={{ fontWeight: 700, color: isDark ? '#f1f5f9' : '#0f172a' }}>
-                          ตัวกรองข้อมูลและเลือกคอลัมน์ (Filter & Field Selection)
+                          ตัวกรองข้อมูลและเครื่องมือ (Filter & Duplicate Tools)
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          กำหนดเงื่อนไขกรองแถวข้อมูล หรือเลือกเฉพาะคอลัมน์ที่ต้องการ Export
+                          กำหนดเงื่อนไขกรองแถวข้อมูล, เลือกเฉพาะคอลัมน์, หรือตรวจสอบข้อมูลซ้ำซ้อน
                         </Typography>
                       </Box>
                     </Box>
@@ -850,8 +1106,8 @@ export default function JsonToExcelPage() {
                   </Box>
 
                   <Collapse in={showFilterSettings}>
-                    {/* Mode Tabs (Filter Rules / Column Picker) */}
-                    <Box sx={{ display: 'flex', gap: 1, mb: 2.5, borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0'}`, pb: 1 }}>
+                    {/* Mode Tabs (Filter Rules / Column Picker / Duplicate Check) */}
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2.5, borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0'}`, pb: 1 }}>
                       <Button
                         size="small"
                         onClick={() => setActiveTab('filter')}
@@ -882,6 +1138,25 @@ export default function JsonToExcelPage() {
                         }}
                       >
                         เลือกคอลัมน์ ({selectedColumns.length}/{availableFields.length})
+                      </Button>
+
+                      <Button
+                        size="small"
+                        onClick={() => setActiveTab('duplicate')}
+                        startIcon={<DifferenceIcon />}
+                        variant={activeTab === 'duplicate' ? 'contained' : 'text'}
+                        sx={{
+                          borderRadius: 2,
+                          textTransform: 'none',
+                          fontWeight: 700,
+                          bgcolor: activeTab === 'duplicate' ? '#ea580c' : 'transparent',
+                          color: activeTab === 'duplicate' ? 'white' : (duplicateAnalysis.totalDupRows > 0 ? '#ea580c' : 'text.secondary'),
+                          '&:hover': {
+                            bgcolor: activeTab === 'duplicate' ? '#c2410c' : (isDark ? 'rgba(234, 88, 12, 0.1)' : '#fff7ed')
+                          }
+                        }}
+                      >
+                        ตรวจสอบข้อมูลซ้ำ ({duplicateAnalysis.groups.length} กลุ่ม{duplicateAnalysis.totalDupRows > 0 ? ` / ${duplicateAnalysis.totalDupRows} แถว` : ''})
                       </Button>
                     </Box>
 
@@ -1055,7 +1330,7 @@ export default function JsonToExcelPage() {
                         )}
 
                         {/* Live Filter Result Status */}
-                        {parsedItems.length > 0 && activeRules.length > 0 && (
+                        {parsedItems.length > 0 && (
                           <Box sx={{ 
                             p: 1.5, 
                             borderRadius: 2, 
@@ -1196,6 +1471,277 @@ export default function JsonToExcelPage() {
                           <Typography variant="caption" sx={{ fontWeight: 700, color: '#0284c7' }}>
                             เลือกแล้ว {selectedColumns.length} จาก {availableFields.length} คอลัมน์
                           </Typography>
+                        </Box>
+                      </Box>
+                    )}
+
+                    {/* TAB 3: DUPLICATE CHECK & MANAGEMENT */}
+                    {activeTab === 'duplicate' && (
+                      <Box>
+                        {/* Duplicate Key Configuration */}
+                        <Box sx={{ mb: 2, p: 2, borderRadius: 2, bgcolor: isDark ? 'rgba(15,23,42,0.5)' : '#ffffff', border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : '#e2e8f0'}` }}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1, color: isDark ? '#fdba74' : '#c2410c' }}>
+                            1. เลือกฟิลด์หลักที่ใช้ตรวจสอบความซ้ำซ้อน (Duplicate Key):
+                          </Typography>
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.8, mb: 1.5 }}>
+                            {availableFields.map(field => {
+                              const isSelected = duplicateFields.includes(field);
+                              const isPopular = field === 'citizen_id' || field === 'uuid' || field === 'passport_id' || field === 'firstname';
+                              return (
+                                <Chip
+                                  key={field}
+                                  label={field}
+                                  size="small"
+                                  onClick={() => handleToggleDuplicateField(field)}
+                                  color={isSelected ? 'warning' : 'default'}
+                                  variant={isSelected ? 'filled' : 'outlined'}
+                                  sx={{
+                                    fontWeight: isSelected ? 700 : 500,
+                                    fontFamily: 'monospace',
+                                    fontSize: '0.75rem',
+                                    borderWidth: isPopular ? 1.5 : 1
+                                  }}
+                                />
+                              );
+                            })}
+                          </Box>
+                          <Typography variant="caption" color="text.secondary">
+                            * สามารถเลือกได้หลายฟิลด์ร่วมกัน (Composite Key) เช่น <code>citizen_id + disease_code</code>
+                          </Typography>
+                        </Box>
+
+                        {/* Duplicate Statistics Overview */}
+                        <Grid container spacing={2} sx={{ mb: 2 }}>
+                          <Grid size={{ xs: 6, sm: 4 }}>
+                            <Box sx={{ p: 1.5, borderRadius: 2, bgcolor: isDark ? 'rgba(234, 88, 12, 0.15)' : '#fff7ed', border: '1px solid rgba(234, 88, 12, 0.3)', textAlign: 'center' }}>
+                              <Typography variant="caption" sx={{ color: '#ea580c', fontWeight: 600 }}>กลุ่มข้อมูลที่ซ้ำ</Typography>
+                              <Typography variant="h5" sx={{ fontWeight: 800, color: '#c2410c' }}>
+                                {duplicateAnalysis.groups.length} กลุ่ม
+                              </Typography>
+                            </Box>
+                          </Grid>
+                          <Grid size={{ xs: 6, sm: 4 }}>
+                            <Box sx={{ p: 1.5, borderRadius: 2, bgcolor: isDark ? 'rgba(239, 68, 68, 0.15)' : '#fef2f2', border: '1px solid rgba(239, 68, 68, 0.3)', textAlign: 'center' }}>
+                              <Typography variant="caption" sx={{ color: '#dc2626', fontWeight: 600 }}>จำนวนแถวที่ซ้ำทั้งหมด</Typography>
+                              <Typography variant="h5" sx={{ fontWeight: 800, color: '#b91c1c' }}>
+                                {duplicateAnalysis.totalDupRows} แถว
+                              </Typography>
+                            </Box>
+                          </Grid>
+                          <Grid size={{ xs: 12, sm: 4 }}>
+                            <Box sx={{ p: 1.5, borderRadius: 2, bgcolor: isDark ? 'rgba(2, 132, 199, 0.15)' : '#f0f9ff', border: '1px solid rgba(2, 132, 199, 0.3)', textAlign: 'center' }}>
+                              <Typography variant="caption" sx={{ color: '#0284c7', fontWeight: 600 }}>สัดส่วนข้อมูลซ้ำ</Typography>
+                              <Typography variant="h5" sx={{ fontWeight: 800, color: '#0369a1' }}>
+                                {parsedItems.length > 0 ? `${((duplicateAnalysis.totalDupRows / parsedItems.length) * 100).toFixed(1)}%` : '0%'}
+                              </Typography>
+                            </Box>
+                          </Grid>
+                        </Grid>
+
+                        {/* Duplicate Export Action Selector */}
+                        <Box sx={{ mb: 2.5, p: 2, borderRadius: 2, bgcolor: isDark ? 'rgba(15,23,42,0.5)' : '#ffffff', border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : '#e2e8f0'}` }}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5 }}>
+                            2. เลือกวิธีการจัดการ/ส่งออกข้อมูลซ้ำ:
+                          </Typography>
+                          <Grid container spacing={1.5}>
+                            <Grid size={{ xs: 12, md: 4 }}>
+                              <Box
+                                onClick={() => setDuplicateAction('all')}
+                                sx={{
+                                  p: 1.5,
+                                  borderRadius: 2,
+                                  cursor: 'pointer',
+                                  border: duplicateAction === 'all' ? '2px solid #0284c7' : `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0'}`,
+                                  bgcolor: duplicateAction === 'all' ? (isDark ? 'rgba(2, 132, 199, 0.2)' : '#e0f2fe') : 'transparent'
+                                }}
+                              >
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                                  <DoneAllIcon sx={{ fontSize: 18, color: duplicateAction === 'all' ? '#0284c7' : 'inherit' }} />
+                                  <Typography variant="body2" sx={{ fontWeight: 700 }}>ส่งออกทั้งหมด (All)</Typography>
+                                </Box>
+                                <Typography variant="caption" color="text.secondary">
+                                  ส่งออกข้อมูลทุกแถว พร้อมสร้างแผ่นงาน "รายการข้อมูลซ้ำ" และไฮไลต์แถวซ้ำ
+                                </Typography>
+                              </Box>
+                            </Grid>
+
+                            <Grid size={{ xs: 12, md: 4 }}>
+                              <Box
+                                onClick={() => setDuplicateAction('only_duplicates')}
+                                sx={{
+                                  p: 1.5,
+                                  borderRadius: 2,
+                                  cursor: 'pointer',
+                                  border: duplicateAction === 'only_duplicates' ? '2px solid #ea580c' : `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0'}`,
+                                  bgcolor: duplicateAction === 'only_duplicates' ? (isDark ? 'rgba(234, 88, 12, 0.2)' : '#fff7ed') : 'transparent'
+                                }}
+                              >
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                                  <FilterListIcon sx={{ fontSize: 18, color: duplicateAction === 'only_duplicates' ? '#ea580c' : 'inherit' }} />
+                                  <Typography variant="body2" sx={{ fontWeight: 700, color: duplicateAction === 'only_duplicates' ? '#c2410c' : 'inherit' }}>
+                                    กรองเฉพาะเคสที่ซ้ำ
+                                  </Typography>
+                                </Box>
+                                <Typography variant="caption" color="text.secondary">
+                                  ส่งออกเฉพาะแถวที่มีการซ้ำซ้อนเท่านั้น (ตัดเคสที่ไม่ซ้ำออกทั้งหมด)
+                                </Typography>
+                              </Box>
+                            </Grid>
+
+                            <Grid size={{ xs: 12, md: 4 }}>
+                              <Box
+                                onClick={() => setDuplicateAction('remove_duplicates')}
+                                sx={{
+                                  p: 1.5,
+                                  borderRadius: 2,
+                                  cursor: 'pointer',
+                                  border: duplicateAction === 'remove_duplicates' ? '2px solid #059669' : `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0'}`,
+                                  bgcolor: duplicateAction === 'remove_duplicates' ? (isDark ? 'rgba(5, 150, 105, 0.2)' : '#ecfdf5') : 'transparent'
+                                }}
+                              >
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                                  <DeleteSweepIcon sx={{ fontSize: 18, color: duplicateAction === 'remove_duplicates' ? '#059669' : 'inherit' }} />
+                                  <Typography variant="body2" sx={{ fontWeight: 700, color: duplicateAction === 'remove_duplicates' ? '#059669' : 'inherit' }}>
+                                    ตัดข้อมูลซ้ำออก (Deduplicate)
+                                  </Typography>
+                                </Box>
+                                <Typography variant="caption" color="text.secondary">
+                                  ตัดแถวที่ซ้ำออก ให้คงเหลือเฉพาะแถวแรกเพียง 1 แถวต่อ Key
+                                </Typography>
+                              </Box>
+                            </Grid>
+                          </Grid>
+                        </Box>
+
+                        {/* Duplicate Groups List Preview */}
+                        <Box>
+                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                              3. รายการกลุ่มที่พบข้อมูลซ้ำ ({filteredDuplicateGroups.length} กลุ่ม):
+                            </Typography>
+                            <TextField
+                              size="small"
+                              placeholder="ค้นหาในรายการซ้ำ..."
+                              value={duplicateSearch}
+                              onChange={(e) => setDuplicateSearch(e.target.value)}
+                              InputProps={{
+                                startAdornment: (
+                                  <InputAdornment position="start">
+                                    <SearchIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                                  </InputAdornment>
+                                )
+                              }}
+                              sx={{ width: 220 }}
+                            />
+                          </Box>
+
+                          {duplicateAnalysis.groups.length === 0 ? (
+                            <Box sx={{ p: 4, textAlign: 'center', borderRadius: 2, bgcolor: isDark ? 'rgba(16, 185, 129, 0.1)' : '#f0fdf4', border: '1px dashed #10b981' }}>
+                              <CheckCircleOutlinedIcon sx={{ color: '#10b981', fontSize: 36, mb: 1 }} />
+                              <Typography variant="body1" sx={{ fontWeight: 700, color: '#047857' }}>
+                                ยอดเยี่ยม! ไม่พบข้อมูลซ้ำซ้อนในไฟล์นี้ตามฟิลด์ [{duplicateFields.join(', ')}]
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                ทุกแถวมีค่าไม่ซ้ำกัน ข้อมูลมีความสมบูรณ์พร้อมส่งออก
+                              </Typography>
+                            </Box>
+                          ) : (
+                            <Stack spacing={1.5} sx={{ maxHeight: 340, overflowY: 'auto', pr: 0.5 }}>
+                              {filteredDuplicateGroups.map((grp, gIdx) => {
+                                const isExpanded = expandedDupGroup === grp.key;
+                                return (
+                                  <Paper
+                                    key={grp.key}
+                                    elevation={0}
+                                    sx={{
+                                      p: 1.5,
+                                      borderRadius: 2,
+                                      bgcolor: isDark ? 'rgba(15, 23, 42, 0.6)' : '#ffffff',
+                                      border: `1px solid ${isDark ? 'rgba(234, 88, 12, 0.3)' : '#fed7aa'}`,
+                                      transition: 'all 0.2s'
+                                    }}
+                                  >
+                                    <Box 
+                                      onClick={() => setExpandedDupGroup(isExpanded ? null : grp.key)}
+                                      sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
+                                    >
+                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2 }}>
+                                        <Chip 
+                                          label={`#${gIdx + 1}`} 
+                                          size="small" 
+                                          sx={{ bgcolor: '#ea580c', color: 'white', fontWeight: 700, fontSize: '0.7rem' }} 
+                                        />
+                                        <Box>
+                                          <Typography variant="body2" sx={{ fontWeight: 700, fontFamily: 'monospace', color: isDark ? '#fdba74' : '#c2410c' }}>
+                                            {grp.key}
+                                          </Typography>
+                                          {grp.items[0]?.firstname && (
+                                            <Typography variant="caption" color="text.secondary">
+                                              ผู้ป่วย: {grp.items[0].titlename || ''} {grp.items[0].firstname} {grp.items[0].lastname || ''} | โรค: {grp.items[0].disease_code || '-'} ({grp.items[0].icd_10 || '-'})
+                                            </Typography>
+                                          )}
+                                        </Box>
+                                      </Box>
+
+                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <Chip 
+                                          label={`ซ้ำ ${grp.count} ครั้ง`} 
+                                          size="small" 
+                                          color="error" 
+                                          sx={{ fontWeight: 700, fontSize: '0.75rem' }} 
+                                        />
+                                        <IconButton size="small">
+                                          {isExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                                        </IconButton>
+                                      </Box>
+                                    </Box>
+
+                                    {/* Expanded Detail Rows */}
+                                    <Collapse in={isExpanded}>
+                                      <Box sx={{ mt: 1.5, pt: 1.5, borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : '#f1f5f9'}` }}>
+                                        <Stack spacing={1}>
+                                          {grp.items.map((item, itIdx) => (
+                                            <Box
+                                              key={itIdx}
+                                              sx={{
+                                                p: 1.2,
+                                                borderRadius: 1.5,
+                                                bgcolor: isDark ? 'rgba(30, 41, 59, 0.5)' : '#f8fafc',
+                                                border: `1px solid ${isDark ? 'rgba(255,255,255,0.05)' : '#e2e8f0'}`,
+                                                fontSize: '0.8rem'
+                                              }}
+                                            >
+                                              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                                                <Typography variant="caption" sx={{ fontWeight: 700, color: '#0284c7' }}>
+                                                  รายการที่ {itIdx + 1}: วันที่บันทึก {item.log_date || '-'} {item.patient_sick ? `(ป่วย: ${item.patient_sick})` : ''}
+                                                </Typography>
+                                                {item.hospital_code && (
+                                                  <Chip label={`รพ. ${item.hospital_code}`} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.65rem' }} />
+                                                )}
+                                              </Box>
+                                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                                                ที่อยู่: {item.epidem_address || item.raw_address || item.address || '-'}
+                                              </Typography>
+                                              {item.error_reason && (
+                                                <Typography variant="caption" sx={{ color: '#dc2626', fontWeight: 600, display: 'block', mt: 0.3 }}>
+                                                  สาเหตุ: {item.error_reason}
+                                                </Typography>
+                                              )}
+                                              {item.uuid && (
+                                                <Typography variant="caption" sx={{ fontFamily: 'monospace', color: 'text.secondary', display: 'block', fontSize: '0.7rem', mt: 0.2 }}>
+                                                  UUID: {item.uuid}
+                                                </Typography>
+                                              )}
+                                            </Box>
+                                          ))}
+                                        </Stack>
+                                      </Box>
+                                    </Collapse>
+                                  </Paper>
+                                );
+                              })}
+                            </Stack>
+                          )}
                         </Box>
                       </Box>
                     )}

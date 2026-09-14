@@ -184,14 +184,79 @@ function matchesFilter(item, filterConfig) {
 }
 
 /**
+ * Helper to extract duplicate key from item based on specified fields
+ */
+function getDuplicateKey(item, fields = ['citizen_id']) {
+  if (!fields || (Array.isArray(fields) && fields.length === 0)) {
+    fields = ['citizen_id'];
+  }
+  const fieldList = Array.isArray(fields) ? fields : [fields];
+  const vals = fieldList.map(f => {
+    const v = item[f];
+    return v !== null && v !== undefined ? String(v).trim() : '';
+  });
+  // If all fields are empty/null, return null (do not group empty values as duplicates)
+  if (vals.every(v => v === '' || v === '-' || v.toLowerCase() === 'null')) {
+    return null;
+  }
+  return vals.join('|||');
+}
+
+/**
+ * Analyze and group duplicate records by specified fields
+ */
+function analyzeDuplicates(items, fields = ['citizen_id']) {
+  const groupsMap = new Map();
+  items.forEach((item, index) => {
+    const key = getDuplicateKey(item, fields);
+    if (!key) return;
+    if (!groupsMap.has(key)) {
+      groupsMap.set(key, []);
+    }
+    groupsMap.get(key).push({ item, index });
+  });
+
+  const duplicateGroups = [];
+  let totalDuplicateRows = 0;
+  const duplicateKeySet = new Set();
+  const duplicateIndexSet = new Set();
+  const firstOccurrenceIndexSet = new Set();
+
+  groupsMap.forEach((entries, key) => {
+    firstOccurrenceIndexSet.add(entries[0].index);
+    if (entries.length > 1) {
+      duplicateGroups.push({
+        key,
+        count: entries.length,
+        items: entries.map(e => e.item),
+        indices: entries.map(e => e.index)
+      });
+      totalDuplicateRows += entries.length;
+      duplicateKeySet.add(key);
+      entries.forEach(e => duplicateIndexSet.add(e.index));
+    }
+  });
+
+  return {
+    duplicateGroups,
+    totalDuplicateRows,
+    duplicateKeySet,
+    duplicateIndexSet,
+    firstOccurrenceIndexSet,
+    totalUniqueKeys: groupsMap.size
+  };
+}
+
+/**
  * Build Government Style Official Error Report Workbook (DDC Official Style)
  * Simplified & direct for non-IT users:
- * - Summary KPI cards with Missing Address count
+ * - Summary KPI cards with Missing Address count & Duplicate count
  * - Direct error_cases table showing patient cases directly with exact field names
  * - Daily Master Log with Thai (field_name) labels
+ * - Dedicated Duplicate Cases Sheet when duplicates are detected
  */
 async function buildGovErrorReportWorkbook(parsedData, options = {}) {
-  const { filters, selectedColumns } = options;
+  const { filters, selectedColumns, duplicateAction = 'all', duplicateFields = ['citizen_id'] } = options;
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'กองระบาดวิทยา กรมควบคุมโรค กระทรวงสาธารณสุข';
   workbook.lastModifiedBy = 'Central Processing Platform';
@@ -380,8 +445,29 @@ async function buildGovErrorReportWorkbook(parsedData, options = {}) {
     }
   }
 
-  // Filter error cases if filters is provided
-  const displayErrors = filters ? allErrors.filter(ec => matchesFilter(ec, filters)) : allErrors;
+  // Analyze Duplicates on all error cases
+  const dupAnalysis = analyzeDuplicates(allErrors, duplicateFields || ['citizen_id']);
+
+  // Filter error cases if filters or duplicateAction is provided
+  let filteredList = filters ? allErrors.filter(ec => matchesFilter(ec, filters)) : allErrors;
+
+  if (duplicateAction === 'only_duplicates') {
+    filteredList = filteredList.filter(ec => {
+      const k = getDuplicateKey(ec, duplicateFields || ['citizen_id']);
+      return k && dupAnalysis.duplicateKeySet.has(k);
+    });
+  } else if (duplicateAction === 'remove_duplicates') {
+    const seenKeys = new Set();
+    filteredList = filteredList.filter(ec => {
+      const k = getDuplicateKey(ec, duplicateFields || ['citizen_id']);
+      if (!k) return true;
+      if (seenKeys.has(k)) return false;
+      seenKeys.add(k);
+      return true;
+    });
+  }
+
+  const displayErrors = filteredList;
 
   const primaryLogDate = Array.from(logDates).join(', ') || new Date().toISOString().split('T')[0];
 
@@ -393,7 +479,7 @@ async function buildGovErrorReportWorkbook(parsedData, options = {}) {
     views: [{ state: 'frozen', xSplit: 0, ySplit: 8 }]
   });
 
-  const totalCols = Math.max(orderedFields.length, 8);
+  const totalCols = Math.max(orderedFields.length, 10);
   const colLetter = (colIndex) => {
     let temp = '';
     let num = colIndex;
@@ -437,7 +523,7 @@ async function buildGovErrorReportWorkbook(parsedData, options = {}) {
   wsMain.getRow(4).height = 8; // Spacer
 
   // 4. Summary KPI Cards (Row 5 - 7)
-  // Card 1: Total records
+  // Card 1: Total records (A5:B7)
   wsMain.mergeCells('A5:B5');
   wsMain.getCell('A5').value = 'จำนวนข้อมูลทั้งหมด (total_records)';
   wsMain.getCell('A5').font = { name: 'TH Sarabun New', size: 11, bold: true, color: { argb: 'FF1E293B' } };
@@ -451,7 +537,7 @@ async function buildGovErrorReportWorkbook(parsedData, options = {}) {
   totalKpi.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
   totalKpi.alignment = { vertical: 'middle', horizontal: 'center' };
 
-  // Card 2: Valid imported
+  // Card 2: Valid imported (C5:D7)
   wsMain.mergeCells('C5:D5');
   wsMain.getCell('C5').value = 'นำเข้าสำเร็จ (valid_imported_count)';
   wsMain.getCell('C5').font = { name: 'TH Sarabun New', size: 11, bold: true, color: { argb: 'FF065F46' } };
@@ -465,7 +551,7 @@ async function buildGovErrorReportWorkbook(parsedData, options = {}) {
   validKpi.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0FDF4' } };
   validKpi.alignment = { vertical: 'middle', horizontal: 'center' };
 
-  // Card 3: Error records
+  // Card 3: Error records (E5:F7)
   wsMain.mergeCells('E5:F5');
   wsMain.getCell('E5').value = 'พบข้อผิดพลาดทั้งหมด (error_records_count)';
   wsMain.getCell('E5').font = { name: 'TH Sarabun New', size: 11, bold: true, color: { argb: 'FF991B1B' } };
@@ -479,15 +565,31 @@ async function buildGovErrorReportWorkbook(parsedData, options = {}) {
   errKpi.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF2F2' } };
   errKpi.alignment = { vertical: 'middle', horizontal: 'center' };
 
-  // Card 4: Address issues summary (As requested by user: "สรุปว่าวันนิมีไม่เจอที่อยู่กี่เคส")
-  wsMain.mergeCells(`G5:${lastColLetter}5`);
-  wsMain.getCell('G5').value = 'สรุปเคสที่มีปัญหาเรื่องที่อยู่ (Address Summary)';
-  wsMain.getCell('G5').font = { name: 'TH Sarabun New', size: 11, bold: true, color: { argb: 'FF854D0E' } };
-  wsMain.getCell('G5').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
+  // Card 4: Duplicate records summary (G5:H7)
+  wsMain.mergeCells('G5:H5');
+  wsMain.getCell('G5').value = 'ข้อมูลซ้ำซ้อน (Duplicate Cases)';
+  wsMain.getCell('G5').font = { name: 'TH Sarabun New', size: 11, bold: true, color: { argb: dupAnalysis.totalDuplicateRows > 0 ? 'FF9A3412' : 'FF065F46' } };
+  wsMain.getCell('G5').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: dupAnalysis.totalDuplicateRows > 0 ? 'FFFFEDD5' : 'FFDCFCE7' } };
   wsMain.getCell('G5').alignment = { vertical: 'middle', horizontal: 'center' };
 
-  wsMain.mergeCells(`G6:${lastColLetter}7`);
-  const addrKpi = wsMain.getCell('G6');
+  wsMain.mergeCells('G6:H7');
+  const dupKpi = wsMain.getCell('G6');
+  dupKpi.value = dupAnalysis.totalDuplicateRows > 0 
+    ? `⚠️ ${dupAnalysis.totalDuplicateRows} เคส (${dupAnalysis.duplicateGroups.length} กลุ่ม)`
+    : `✅ ไม่พบข้อมูลซ้ำ`;
+  dupKpi.font = { name: 'TH Sarabun New', size: 15, bold: true, color: { argb: dupAnalysis.totalDuplicateRows > 0 ? 'FFEA580C' : 'FF16A34A' } };
+  dupKpi.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: dupAnalysis.totalDuplicateRows > 0 ? 'FFFFF7ED' : 'FFF0FDF4' } };
+  dupKpi.alignment = { vertical: 'middle', horizontal: 'center' };
+
+  // Card 5: Address issues summary (I5:lastColLetter7)
+  wsMain.mergeCells(`I5:${lastColLetter}5`);
+  wsMain.getCell('I5').value = 'สรุปเคสที่มีปัญหาเรื่องที่อยู่ (Address Summary)';
+  wsMain.getCell('I5').font = { name: 'TH Sarabun New', size: 11, bold: true, color: { argb: 'FF854D0E' } };
+  wsMain.getCell('I5').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
+  wsMain.getCell('I5').alignment = { vertical: 'middle', horizontal: 'center' };
+
+  wsMain.mergeCells(`I6:${lastColLetter}7`);
+  const addrKpi = wsMain.getCell('I6');
   let addrSummaryText = '';
   if (nullAddressCount > 0 && invalidAddressCodeCount > 0) {
     addrSummaryText = `⚠️ ไม่พบที่อยู่/รหัสที่อยู่ผิด: ${invalidAddressCodeCount} เคส (ไม่ระบุที่อยู่ ${nullAddressCount} เคส, รหัสตำบลผิด ${invalidAddressCodeCount} เคส)`;
@@ -519,7 +621,8 @@ async function buildGovErrorReportWorkbook(parsedData, options = {}) {
   applyBorderBox(1, 5, 2, 7);
   applyBorderBox(3, 5, 4, 7);
   applyBorderBox(5, 5, 6, 7);
-  applyBorderBox(7, 5, totalCols, 7);
+  applyBorderBox(7, 5, 8, 7);
+  applyBorderBox(9, 5, totalCols, 7);
 
   // 5. Table Header for error_cases (Row 8)
   // Display all field keys from error_cases with error_reason as the last column
@@ -568,6 +671,8 @@ async function buildGovErrorReportWorkbook(parsedData, options = {}) {
     });
   } else {
     displayErrors.forEach((errObj, idx) => {
+      const isDuplicateRow = dupAnalysis.duplicateKeySet.has(getDuplicateKey(errObj, duplicateFields || ['citizen_id']));
+
       const rowValues = orderedFields.map(field => {
         const val = errObj[field];
         if (val === null || val === undefined) return '-';
@@ -611,6 +716,10 @@ async function buildGovErrorReportWorkbook(parsedData, options = {}) {
         } else if (fieldName === 'invalid_code') {
           cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FFC2410C' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF7ED' } };
+        } else if (isDuplicateRow && (fieldName === 'citizen_id' || fieldName === 'uuid' || fieldName === 'firstname' || fieldName === 'lastname')) {
+          // Highlight duplicate fields
+          cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FFC2410C' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEDD5' } }; // Subtle Warm Orange
         } else if (cell.value === '-' || cell.value === 'null') {
           cell.font = { name: 'Segoe UI', size: 10, italic: true, color: { argb: 'FF94A3B8' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isEven ? 'FFFFFFFF' : 'FFF8FAFC' } };
@@ -704,15 +813,143 @@ async function buildGovErrorReportWorkbook(parsedData, options = {}) {
     });
   });
 
+  // =============================================================
+  // Sheet 3: รายการข้อมูลซ้ำ (Duplicate Cases Sheet - if any)
+  // =============================================================
+  if (dupAnalysis.duplicateGroups.length > 0) {
+    const wsDup = workbook.addWorksheet('รายการข้อมูลซ้ำ', {
+      pageSetup: { paperSize: 9, orientation: 'landscape' },
+      views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }]
+    });
+
+    // Header Banner
+    wsDup.mergeCells('A1:J1');
+    const dupTitle = wsDup.getCell('A1');
+    dupTitle.value = 'ตารางวิเคราะห์รายการข้อมูลที่ซ้ำซ้อน (Duplicate Cases Audit Breakdown)';
+    dupTitle.font = { name: 'TH Sarabun New', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
+    dupTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7C2D12' } }; // Warm Rust
+    dupTitle.alignment = { vertical: 'middle', horizontal: 'center' };
+    wsDup.getRow(1).height = 32;
+
+    // Subtitle
+    wsDup.mergeCells('A2:J2');
+    const dupSub = wsDup.getCell('A2');
+    dupSub.value = `ฟิลด์ที่ตรวจสอบ: ${(duplicateFields || ['citizen_id']).join(', ')}   |   พบข้อมูลซ้ำทั้งหมด ${dupAnalysis.totalDuplicateRows} รายการ (${dupAnalysis.duplicateGroups.length} กลุ่ม)`;
+    dupSub.font = { name: 'TH Sarabun New', size: 12, italic: true, color: { argb: 'FFE2E8F0' } };
+    dupSub.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF9A3412' } };
+    dupSub.alignment = { vertical: 'middle', horizontal: 'center' };
+    wsDup.getRow(2).height = 24;
+
+    wsDup.getRow(3).height = 6; // Spacer
+
+    const dupHeaders = [
+      { header: 'กลุ่มที่ (#Group)', width: 14, align: 'center' },
+      { header: 'เลขบัตรประชาชน (citizen_id)', width: 22, align: 'center' },
+      { header: 'จำนวนที่ซ้ำ', width: 14, align: 'center' },
+      { header: 'วันที่บันทึก (log_date)', width: 18, align: 'center' },
+      { header: 'ชื่อ - นามสกุล ผู้ป่วย', width: 26, align: 'left' },
+      { header: 'รหัสโรค / ICD-10', width: 18, align: 'center' },
+      { header: 'รหัสสถานพยาบาล', width: 18, align: 'center' },
+      { header: 'ที่อยู่ขณะป่วย (epidem_address)', width: 30, align: 'left' },
+      { header: 'สาเหตุข้อผิดพลาด (error_reason)', width: 45, align: 'left' },
+      { header: 'UUID เคส', width: 38, align: 'center' }
+    ];
+
+    const dHeaderRow = wsDup.getRow(4);
+    dHeaderRow.height = 28;
+    dupHeaders.forEach((h, idx) => {
+      const colIdx = idx + 1;
+      const cell = dHeaderRow.getCell(colIdx);
+      cell.value = h.header;
+      cell.font = { name: 'TH Sarabun New', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7C2D12' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      cell.border = {
+        top: { style: 'medium', color: { argb: 'FF431407' } },
+        left: { style: 'thin', color: { argb: 'FF9A3412' } },
+        bottom: { style: 'medium', color: { argb: 'FF431407' } },
+        right: { style: 'thin', color: { argb: 'FF9A3412' } }
+      };
+      wsDup.getColumn(colIdx).width = h.width;
+    });
+
+    let currentDupRow = 5;
+    dupAnalysis.duplicateGroups.forEach((grp, gIdx) => {
+      const isGroupEven = gIdx % 2 === 0;
+      const groupBg = isGroupEven ? 'FFFFFFFF' : 'FFFFF7ED';
+
+      grp.items.forEach((item, itemIdx) => {
+        const patientName = `${item.titlename || ''} ${item.firstname || ''} ${item.lastname || ''}`.trim() || '-';
+        const diseaseInfo = `${item.disease_code || '-'} (${item.icd_10 || '-'})`;
+        const epidemAddr = `${item.epidem_address || ''} ${item.epidem_road ? 'ถ.' + item.epidem_road : ''}`.trim() || item.raw_address || '-';
+
+        const row = wsDup.addRow([
+          `กลุ่ม #${gIdx + 1} (${itemIdx + 1}/${grp.count})`,
+          item.citizen_id || grp.key,
+          `${grp.count} ครั้ง`,
+          item.log_date || '-',
+          patientName,
+          diseaseInfo,
+          item.hospital_code || item.cure_loc_code || '-',
+          epidemAddr,
+          item.error_reason || '-',
+          item.uuid || '-'
+        ]);
+        row.height = 24;
+
+        row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+          const hConfig = dupHeaders[colNumber - 1];
+          cell.font = { name: 'TH Sarabun New', size: 11 };
+          cell.alignment = { 
+            vertical: 'middle', 
+            horizontal: hConfig ? hConfig.align : 'left',
+            wrapText: colNumber === 8 || colNumber === 9
+          };
+          cell.border = {
+            top: { style: itemIdx === 0 ? 'medium' : 'thin', color: { argb: 'FFCBD5E1' } },
+            left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            bottom: { style: itemIdx === grp.count - 1 ? 'medium' : 'thin', color: { argb: 'FFCBD5E1' } },
+            right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+          };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: groupBg }
+          };
+
+          if (colNumber === 2) {
+            cell.font = { name: 'TH Sarabun New', size: 11, bold: true, color: { argb: 'FFC2410C' } };
+          }
+          if (colNumber === 9) {
+            cell.font = { name: 'TH Sarabun New', size: 11, bold: true, color: { argb: 'FF991B1B' } };
+          }
+        });
+        currentDupRow++;
+      });
+    });
+
+    wsDup.autoFilter = {
+      from: { row: 4, column: 1 },
+      to: { row: currentDupRow - 1, column: 10 }
+    };
+  }
+
+  const resultSheetNames = ['รายงานข้อผิดพลาด', 'สรุปบันทึกรายวัน'];
+  if (dupAnalysis.duplicateGroups.length > 0) {
+    resultSheetNames.push('รายการข้อมูลซ้ำ');
+  }
+
   return {
     workbook,
     totalRows: allErrors.length,
     totalColumns: totalCols,
-    sheetNames: ['รายงานข้อผิดพลาด', 'สรุปบันทึกรายวัน'],
+    sheetNames: resultSheetNames,
     stats: {
       totalRecords: totalRecordsSum,
       validRecords: validImportedSum,
-      errorRecords: errorRecordsSum
+      errorRecords: errorRecordsSum,
+      duplicateRecords: dupAnalysis.totalDuplicateRows,
+      duplicateGroups: dupAnalysis.duplicateGroups.length
     }
   };
 }
@@ -1046,7 +1283,7 @@ async function executeStreamingStandard(filePath, outputPath, options = {}) {
 /**
  * Standard in-memory JSON to Excel conversion
  */
-function normalizeJsonData(rawData, shouldFlatten = true, filters = null, selectedColumns = null) {
+function normalizeJsonData(rawData, shouldFlatten = true, filters = null, selectedColumns = null, duplicateAction = 'all', duplicateFields = ['citizen_id']) {
   const sheets = {};
 
   if (!rawData) {
@@ -1060,6 +1297,27 @@ function normalizeJsonData(rawData, shouldFlatten = true, filters = null, select
     if (filters) {
       list = list.filter(item => matchesFilter(item, filters));
     }
+
+    // Apply duplicate handling if requested
+    if (duplicateAction === 'only_duplicates' || duplicateAction === 'remove_duplicates') {
+      const dup = analyzeDuplicates(list, duplicateFields || ['citizen_id']);
+      if (duplicateAction === 'only_duplicates') {
+        list = list.filter(item => {
+          const k = getDuplicateKey(item, duplicateFields || ['citizen_id']);
+          return k && dup.duplicateKeySet.has(k);
+        });
+      } else if (duplicateAction === 'remove_duplicates') {
+        const seenKeys = new Set();
+        list = list.filter(item => {
+          const k = getDuplicateKey(item, duplicateFields || ['citizen_id']);
+          if (!k) return true;
+          if (seenKeys.has(k)) return false;
+          seenKeys.add(k);
+          return true;
+        });
+      }
+    }
+
     if (Array.isArray(selectedColumns) && selectedColumns.length > 0) {
       list = list.map(item => {
         if (typeof item !== 'object' || item === null) return item;
@@ -1207,7 +1465,14 @@ const execute = async (inputSource, options = {}) => {
     sheetNames = govResult.sheetNames;
   } else {
     // Standard table mode
-    const sheetsData = normalizeJsonData(parsedData, options.flatten !== false, options.filters, options.selectedColumns);
+    const sheetsData = normalizeJsonData(
+      parsedData, 
+      options.flatten !== false, 
+      options.filters, 
+      options.selectedColumns,
+      options.duplicateAction,
+      options.duplicateFields
+    );
     workbook = new ExcelJS.Workbook();
     workbook.creator = 'DDC Data Platform';
     workbook.created = new Date();
@@ -1379,5 +1644,7 @@ module.exports = {
   normalizeJsonData,
   safeJsonParse,
   detectErrorLogStructure,
-  buildGovErrorReportWorkbook
+  buildGovErrorReportWorkbook,
+  analyzeDuplicates,
+  getDuplicateKey
 };

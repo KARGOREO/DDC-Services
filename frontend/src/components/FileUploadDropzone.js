@@ -115,7 +115,7 @@ export default function FileUploadDropzone({ file, setFile, accept, label, helpe
       </Typography>
 
       {file ? (
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mt: 0.5 }}>
           <Chip 
             icon={<InsertDriveFileIcon sx={{ fontSize: 14 }} />}
             label={`${(file.size / 1024).toFixed(1)} KB`} 

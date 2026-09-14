@@ -109,6 +109,16 @@ exports.jsonToExcelHandler = async (req, res, next) => {
             }
         }
 
+        const duplicateAction = req.body.duplicateAction || req.query.duplicateAction || 'all';
+        let duplicateFields = req.body.duplicateFields;
+        if (typeof duplicateFields === 'string') {
+            try {
+                duplicateFields = JSON.parse(duplicateFields);
+            } catch (e) {
+                duplicateFields = duplicateFields.split(',').map(s => s.trim()).filter(Boolean);
+            }
+        }
+
         if (req.file) {
             inputSource = req.file.path;
         } else if (req.body && req.body.jsonData) {
@@ -124,7 +134,15 @@ exports.jsonToExcelHandler = async (req, res, next) => {
         }
 
         const originalName = req.file ? req.file.originalname : undefined;
-        const result = await jsonToExcelService.execute(inputSource, { flatten, mode, originalName, filters, selectedColumns });
+        const result = await jsonToExcelService.execute(inputSource, { 
+            flatten, 
+            mode, 
+            originalName, 
+            filters, 
+            selectedColumns,
+            duplicateAction,
+            duplicateFields
+        });
         if (req.file) {
             cleanupFiles([req.file]);
         }
@@ -167,6 +185,29 @@ exports.convertSampleGovTestHandler = async (req, res, next) => {
         }
 
         const result = await jsonToExcelService.execute(samplePath, { mode: 'gov' });
+        res.setHeader('Content-Disposition', `attachment; filename="${result.fileName}"`);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.download(result.outputPath, result.fileName);
+    } catch (error) {
+        next(error);
+    }
+};
+
+exports.convertSampleGovError0913Handler = async (req, res, next) => {
+    try {
+        let samplePath = path.join(process.cwd(), 'src', 'item-excel', 'error09_13.json');
+        if (!fs.existsSync(samplePath)) {
+            samplePath = 'c:/Users/008/Downloads/error09_13.json';
+        }
+        if (!fs.existsSync(samplePath)) {
+            return res.status(404).json({ error: 'ไม่พบไฟล์ตัวอย่าง error09_13.json ในระบบ' });
+        }
+
+        const duplicateAction = req.query.duplicateAction || 'all';
+        const result = await jsonToExcelService.execute(samplePath, { 
+            mode: 'gov',
+            duplicateAction
+        });
         res.setHeader('Content-Disposition', `attachment; filename="${result.fileName}"`);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.download(result.outputPath, result.fileName);

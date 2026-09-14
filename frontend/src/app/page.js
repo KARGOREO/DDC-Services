@@ -98,7 +98,7 @@ export default function Dashboard() {
       {/* Hero Header */}
       <Fade in={true} timeout={700}>
         <Box sx={{ textAlign: 'center', mb: { xs: 5, md: 8 } }}>
-          <Stack direction="row" spacing={1} justifyContent="center" sx={{ mb: 2 }}>
+          <Stack direction="row" spacing={1} sx={{ justifyContent: 'center', mb: 2 }}>
             <Chip 
               icon={<ShieldIcon sx={{ fontSize: 16 }} />} 
               label="กองระบาดวิทยา กรมควบคุมโรค (DDC)" 
