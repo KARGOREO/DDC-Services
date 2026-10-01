@@ -272,6 +272,9 @@ async function buildGovErrorReportWorkbook(parsedData, options = {}) {
   let logDates = new Set();
   let lastUpdatedAt = '-';
 
+  const addressEnumService = require('./addressEnum.service');
+  const enumMapping = addressEnumService.getAllMappings();
+
   // Extract all error cases & log summaries
   const allErrors = [];
   const logSummaries = [];
@@ -318,6 +321,14 @@ async function buildGovErrorReportWorkbook(parsedData, options = {}) {
         }
         if (ec.error_reason && (ec.error_reason.includes('ตำบล') || ec.error_reason.includes('ที่อยู่') || ec.error_reason.includes('address'))) {
           invalidAddressCodeCount++;
+        }
+
+        // Auto populate 'ใช้รหัสแขวง' from enum mapping if not already provided
+        const invCode = ec.invalid_code ? String(ec.invalid_code).trim() : '';
+        if (invCode && (!ec['ใช้รหัสแขวง'] || ec['ใช้รหัสแขวง'] === '-')) {
+          if (enumMapping[invCode] !== undefined) {
+            ec['ใช้รหัสแขวง'] = enumMapping[invCode];
+          }
         }
 
         allErrors.push(ec);
@@ -403,6 +414,7 @@ async function buildGovErrorReportWorkbook(parsedData, options = {}) {
     'state',
     'remark',
     'invalid_code',
+    'ใช้รหัสแขวง',
     'detected_at',
     'resolved_at',
     'update_datetime'
@@ -709,13 +721,16 @@ async function buildGovErrorReportWorkbook(parsedData, options = {}) {
           right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
         };
 
-        // Highlight error_reason (last column) and invalid_code
+        // Highlight error_reason (last column), invalid_code, and ใช้รหัสแขวง
         if (fieldName === 'error_reason') {
           cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF991B1B' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF2F2' } };
         } else if (fieldName === 'invalid_code') {
           cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FFC2410C' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF7ED' } };
+        } else if (fieldName === 'ใช้รหัสแขวง') {
+          cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF0F766E' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0FDFA' } };
         } else if (isDuplicateRow && (fieldName === 'citizen_id' || fieldName === 'uuid' || fieldName === 'firstname' || fieldName === 'lastname')) {
           // Highlight duplicate fields
           cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FFC2410C' } };

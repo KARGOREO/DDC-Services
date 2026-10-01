@@ -8,11 +8,32 @@ import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 
-export default function FileUploadDropzone({ file, setFile, accept, label, helperText, icon }) {
+export default function FileUploadDropzone({ 
+  file, 
+  setFile, 
+  onFileSelect,
+  selectedFile,
+  accept, 
+  label, 
+  title,
+  helperText, 
+  subtitle,
+  icon 
+}) {
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef(null);
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
+
+  const currentFile = file || selectedFile;
+  const handleFileChange = (selected) => {
+    if (setFile && typeof setFile === 'function') {
+      setFile(selected);
+    }
+    if (onFileSelect && typeof onFileSelect === 'function') {
+      onFileSelect(selected);
+    }
+  };
 
   const handleDrag = (e) => {
     e.preventDefault();
@@ -29,7 +50,7 @@ export default function FileUploadDropzone({ file, setFile, accept, label, helpe
     e.stopPropagation();
     setDragActive(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setFile(e.dataTransfer.files[0]);
+      handleFileChange(e.dataTransfer.files[0]);
     }
   };
 
@@ -46,14 +67,14 @@ export default function FileUploadDropzone({ file, setFile, accept, label, helpe
         border: `2px dashed ${
           dragActive 
             ? theme.palette.primary.main 
-            : file 
+            : currentFile 
             ? (isDark ? '#059669' : '#10b981')
             : isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.15)'
         }`,
         borderRadius: 4,
         bgcolor: dragActive 
           ? (isDark ? 'rgba(79, 70, 229, 0.12)' : 'rgba(79, 70, 229, 0.05)') 
-          : file 
+          : currentFile 
           ? (isDark ? 'rgba(16, 185, 129, 0.08)' : 'rgba(16, 185, 129, 0.04)')
           : (isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)'),
         display: 'flex', 
@@ -73,12 +94,16 @@ export default function FileUploadDropzone({ file, setFile, accept, label, helpe
       <input 
         ref={fileInputRef}
         type="file" 
-        accept={accept} 
-        onChange={e => setFile(e.target.files[0])} 
+        accept={typeof accept === 'object' ? Object.keys(accept).join(',') : accept} 
+        onChange={e => {
+          if (e.target.files && e.target.files[0]) {
+            handleFileChange(e.target.files[0]);
+          }
+        }} 
         style={{ display: 'none' }}
       />
 
-      {file ? (
+      {currentFile ? (
         <Box sx={{
           width: 54,
           height: 54,
@@ -111,14 +136,14 @@ export default function FileUploadDropzone({ file, setFile, accept, label, helpe
       )}
 
       <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.5, wordBreak: 'break-word', maxWidth: '100%' }}>
-        {file ? file.name : label}
+        {currentFile ? currentFile.name : (label || title || "เลือกหรือลากไฟล์มาวางที่นี่")}
       </Typography>
 
-      {file ? (
+      {currentFile ? (
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mt: 0.5 }}>
           <Chip 
             icon={<InsertDriveFileIcon sx={{ fontSize: 14 }} />}
-            label={`${(file.size / 1024).toFixed(1)} KB`} 
+            label={`${(currentFile.size / 1024).toFixed(1)} KB`} 
             size="small" 
             color="success" 
             variant="outlined" 
@@ -130,7 +155,7 @@ export default function FileUploadDropzone({ file, setFile, accept, label, helpe
         </Stack>
       ) : (
         <Typography variant="body2" color="text.secondary" sx={{ maxWidth: '380px' }}>
-          {helperText || "ลากและวางไฟล์ หรือคลิกเพื่อเลือกไฟล์จากคอมพิวเตอร์"}
+          {helperText || subtitle || "ลากและวางไฟล์ หรือคลิกเพื่อเลือกไฟล์จากคอมพิวเตอร์"}
         </Typography>
       )}
     </Box>

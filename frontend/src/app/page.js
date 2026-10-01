@@ -26,12 +26,23 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import ShieldIcon from '@mui/icons-material/Shield';
 import EditLocationAltIcon from '@mui/icons-material/EditLocationAlt';
+import FactCheckIcon from '@mui/icons-material/FactCheck';
 
 export default function Dashboard() {
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
 
   const services = [
+    {
+      title: 'จัดการ Enum รหัสที่อยู่ & แขวง (Address Enum)',
+      description: 'กำหนดและตรวจสอบคู่รหัสตำบล/แขวงที่ผิดพลาด (invalid_code) เทียบรหัสแขวงที่ถูกต้อง (ใช้รหัสแขวง) และแปลง JSON เป็น Excel อัตโนมัติ',
+      route: '/address-enum',
+      gradient: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+      shadow: 'rgba(16, 185, 129, 0.3)',
+      icon: <FactCheckIcon sx={{ fontSize: 32 }} />,
+      tag: 'New Feature (Enum)',
+      tagColor: 'success'
+    },
     {
       title: 'สร้าง SQL Update ที่อยู่ขณะป่วย (Address Fallback)',
       description: 'แปลงผลลัพธ์ Query JSON สร้างคำสั่ง SQL UPDATE เติมข้อมูลที่อยู่ขณะป่วย (epidem_) จากที่อยู่ปัจจุบันอัตโนมัติ',

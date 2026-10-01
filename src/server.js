@@ -10,6 +10,7 @@ const swaggerSpec = require('./config/swagger.config');
 const reportRoutes = require('./routes/report.routes');
 const sqlRoutes = require('./routes/sql.routes');
 const fileRoutes = require('./routes/file.routes');
+const addressEnumRoutes = require('./routes/addressEnum.routes');
 const errorHandler = require('./middlewares/errorHandler');
 
 const app = express();
@@ -39,8 +40,10 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // 6. API Routes
 app.use('/api/report', reportRoutes);
+app.use('/api/reports', reportRoutes); // Alias for plural endpoint
 app.use('/api/sql', sqlRoutes);
 app.use('/api/files', fileRoutes);
+app.use('/api/address-enum', addressEnumRoutes);
 
 // Health Check
 app.get('/health', (req, res) => {
