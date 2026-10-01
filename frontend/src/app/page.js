@@ -25,12 +25,23 @@ import ManageHistoryIcon from '@mui/icons-material/ManageHistory';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import ShieldIcon from '@mui/icons-material/Shield';
+import EditLocationAltIcon from '@mui/icons-material/EditLocationAlt';
 
 export default function Dashboard() {
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
 
   const services = [
+    {
+      title: 'สร้าง SQL Update ที่อยู่ขณะป่วย (Address Fallback)',
+      description: 'แปลงผลลัพธ์ Query JSON สร้างคำสั่ง SQL UPDATE เติมข้อมูลที่อยู่ขณะป่วย (epidem_) จากที่อยู่ปัจจุบันอัตโนมัติ',
+      route: '/sql-update-address',
+      gradient: 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
+      shadow: 'rgba(14, 165, 233, 0.3)',
+      icon: <EditLocationAltIcon sx={{ fontSize: 32 }} />,
+      tag: 'New Feature',
+      tagColor: 'info'
+    },
     {
       title: 'แปลง JSON เป็น Excel (DDC Report)',
       description: 'แปลงไฟล์ JSON ทุกรูปแบบ พร้อมโหมดราชการ (DDC Report) สรุป Error Cases Log และจัดคอลัมน์อัตโนมัติ',
